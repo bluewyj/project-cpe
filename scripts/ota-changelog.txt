@@ -1,0 +1,5 @@
+v3.4.9 稳定热修（修复今日断流）：
+- 彻底移除自动 usb0 soft-reset / peer 探测 bounce
+- Watchdog 不再周期性 iptables -F，只清 usb0→sipa FORWARD DROP
+- IPv6 地址自愈改为先补后清，避免删地址导致抖动
+- 数据连接切换同样不再整表 flush
