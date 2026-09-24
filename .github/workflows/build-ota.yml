@@ -1,4 +1,5 @@
 name: Build OTA Package
+# Keep registered with GitHub Actions (workflow_dispatch)
 
 on:
   workflow_dispatch:
