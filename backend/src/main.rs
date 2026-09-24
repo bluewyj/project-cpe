@@ -135,8 +135,8 @@ async fn spa_fallback(uri: Uri) -> Response {
 #[command(name = "udx710")]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// 监听端口 (默认: 3000)
-    #[arg(short, long, default_value = "3000", env = "PORT")]
+    /// 监听端口 (默认: 80)
+    #[arg(short, long, default_value = "80", env = "PORT")]
     port: u16,
 
     /// 监听地址 (默认: 0.0.0.0)

@@ -246,11 +246,11 @@ jobs:
             ### 安装说明
 
             ```bash
-            curl -X POST http://192.168.66.1:3000/api/ota/upload \
+            curl -X POST http://192.168.66.1/api/ota/upload \
               -H "Content-Type: application/octet-stream" \
               --data-binary "@udx710-ota-${{ steps.version.outputs.version }}.tar.gz"
 
-            curl -X POST http://192.168.66.1:3000/api/ota/apply \
+            curl -X POST http://192.168.66.1/api/ota/apply \
               -H "Content-Type: application/json" \
               -d '{"restart_now":true}'
             ```
