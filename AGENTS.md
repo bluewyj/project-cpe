@@ -61,7 +61,7 @@
 - 在回复里堆长英文术语墙；主人要的是可决策的说明
 - 对 `main` force push、`--no-verify` 跳过 hook、擅自改 `git config`（除非主人写明允许）
 - 只改一处版本号导致三处不一致（见「版本管理」）
-- 用 PowerShell 默认编码、或对含中文的文档/源码（含中文注释）使用 `StrReplace`（见 `.cursor/rules/text-encoding.mdc`）
+- 用 PowerShell 默认编码、对含中文文件用 `StrReplace`、Shell 里写 bash HEREDOC/内联多行中文，或以「临时文件」为由不遵守 UTF-8（见 `.cursor/rules/text-encoding.mdc`）
 
 ## 技术规范去哪看
 

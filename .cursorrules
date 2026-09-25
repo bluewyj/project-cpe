@@ -5,7 +5,7 @@
 | 规则 | 何时生效 |
 |------|----------|
 | `00-project-stack.mdc` | 常驻：技术栈、目录、硬约束 |
-| `text-encoding.mdc` | 常驻：UTF-8；禁 PS 默认编码与含中文文件 StrReplace |
+| `text-encoding.mdc` | 常驻：UTF-8；禁乱码写法（含 Shell/HEREDOC） |
 | `rust-backend.mdc` | `backend/**/*.rs` |
 | `dbus-ofono.mdc` | D-Bus / AT / 串行相关 |
 | `frontend-react.mdc` | `frontend/**/*.{ts,tsx}` |

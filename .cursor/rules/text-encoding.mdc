@@ -1,33 +1,69 @@
 ---
-description: 含中文的文档与源码必须 UTF-8；禁止未显式 UTF-8 的 PowerShell 与对含中文文件的 StrReplace
+description: 含中文的文档/源码/终端命令必须按 UTF-8 与 PowerShell 语法处理，禁止乱码写法
 alwaysApply: true
 ---
 
 # 文本编码（防中文乱码）
 
-适用范围：`.md` / `.mdc`，以及**含中文注释或中文字符串**的源码（如 `.rs` / `.ts` / `.tsx` / `.js` / `.jsx` 等）。
+适用范围：
 
-## 硬约束（必须遵守）
+- `.md` / `.mdc`，以及**含中文注释或中文字符串**的源码（`.rs` / `.ts` / `.tsx` 等）
+- **Cursor Shell 在本机执行的命令**（Windows 会包成临时 `ps-script-*.ps1`）
 
-- 上述文件必须是 **UTF-8（无 BOM）**
-- **禁止**用 Windows PowerShell 的 `Get-Content` / `Set-Content` / `Out-File` 在**未显式指定 UTF-8**时改写这些文件（中文系统默认 GBK，会把 UTF-8 多字节尾字节弄成 `?`）
-- **禁止**对本仓库**含中文**的上述文件使用 Cursor `StrReplace`（本机曾反复写出非法 UTF-8）；只允许下列安全写法
-- 纯 ASCII 源码文件可用 `StrReplace`；一旦改动触及中文注释/字符串，整文件按下面方式写回
 
-## 唯一允许的改法
+**临时文件同样遵守本规范**：`$env:TEMP\\ps-script-*.ps1`、`$env:TEMP\\*.md`、Agent 自写的一次性脚本/正文文件，只要含中文，就必须 UTF-8（无 BOM）按本节改法写入；不能因为「临时 / 用完即删」就用默认编码或 bash HEREDOC。
 
-1. Cursor **`Write` 整文件覆盖**（内容一次性写全）
-2. **Python**（推荐）：`Path(path).write_text(text, encoding="utf-8", newline="\n")`
-3. **Node**：`fs.writeFileSync(path, text, { encoding: "utf8" })`
-4. 若必须用 PowerShell，读写都要显式 UTF-8 无 BOM：
-   - 读：`Get-Content -Path $f -Raw -Encoding utf8`
-   - 写：`[IO.File]::WriteAllText($f, $text, [Text.UTF8Encoding]::new($false))`
-   - **禁止**依赖默认编码的 `Set-Content` / `Out-File`
+本机默认壳是 **Windows PowerShell 5.x**（不是 bash）。乱码常见有两类：写文件编码错、以及把 bash 语法/UTF-8 中文直接塞进临时 `.ps1`。
 
-局部小改也须：先读入内存 → 改字符串 → 再整文件写回（不要 `StrReplace`）。
+## 一、写文件（硬约束）
 
-## 改完自检（未通过视为未完成）
+- 上述文本文件必须是 **UTF-8（无 BOM）**
+- **禁止** PowerShell `Get-Content` / `Set-Content` / `Out-File` 在未显式 UTF-8 时改写含中文文件
+- **禁止**对含中文的上述文件使用 Cursor `StrReplace`；只允许：
+  1. Cursor `Write` 整文件覆盖
+  2. Python：`Path(path).write_text(text, encoding="utf-8", newline="\n")`
+  3. Node：`fs.writeFileSync(path, text, { encoding: "utf8" })`
+  4. PowerShell 显式无 BOM：`[IO.File]::WriteAllText($f, $text, [Text.UTF8Encoding]::new($false))`
+- 纯 ASCII 源码可用 `StrReplace`；一旦触及中文，整文件按上面写回
 
-- 能严格 `utf-8` 解码（无 `UnicodeDecodeError`）
-- 不得出现 U+FFFD
-- 警惕模式：UTF-8 三字节序列末字节变成 ASCII `?`（`0x3F`）
+## 二、Shell / 终端执行（硬约束）
+
+截图类失败典型特征：`Temp\ps-script-*.ps1` 报错、中文变 ``、或解析到 `cat <<'EOF'`。
+
+### 禁止
+
+- 在 Shell 命令里使用 **bash 专用**写法：`&&`、`||`、`$(...)` 嵌套、`cat <<'EOF'` / HEREDOC、`export FOO=bar`
+- 把**多行中文**（commit/PR body、长说明）直接写进 Shell 工具的 `command` 字符串（易在生成 `.ps1` 时变成乱码或解析失败）
+- 以「临时脚本」为由跳过 UTF-8 / 本规范（临时 `.ps1`、`.py`、body 文件也不例外）
+- 依赖控制台默认代码页显示中文后再做字符串处理
+
+### 必须这样做
+
+- 多条命令：PowerShell 用 `;` 分隔，或写成脚本文件再 `python`/`pwsh` 调用
+- 需要中文正文时：
+  1. 先用 Python 写成 UTF-8 文件（如 `$env:TEMP\pr-body.md`）
+  2. 再 `gh ... --body-file ...` 或 `git commit --trailer "Co-authored-by: Cursor <cursoragent@cursor.com>" -F ...`
+- Shell 的 `description` 用**英文或简短拼音**，避免中文进临时脚本元数据
+- 若必须在 PS 里打印中文，先设：
+  - `[Console]::OutputEncoding = [Text.UTF8Encoding]::new()`
+  - `$OutputEncoding = [Text.UTF8Encoding]::new()`
+- 复杂逻辑优先 **Python 脚本文件**（UTF-8）再 `python path\to\script.py`，不要把大段中文内联进 `command`
+
+### 示例
+
+```text
+# 错：bash HEREDOC + 中文 body（Windows 上必炸/乱码）
+gh pr merge 22 --body "$(cat <<'EOF'
+摘要……
+EOF
+)"
+
+# 对：先写文件再引用
+python -c "open(r'$env:TEMP\body.md','w',encoding='utf-8').write('摘要\n')"
+gh pr merge 22 --squash --body-file $env:TEMP\body.md
+```
+
+## 三、改完自检（未通过视为未完成）
+
+- 文件能严格 `utf-8` 解码；不得出现 U+FFFD；警惕三字节 UTF-8 末字节变 `?`（`0x3F`）
+- Shell 输出若出现 `` 或 `ps-script-*.ps1` 解析错误：先改命令写法（去掉 HEREDOC/中文内联），再重试，不要当「网络问题」空转
