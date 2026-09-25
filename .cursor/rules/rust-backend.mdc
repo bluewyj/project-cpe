@@ -1,0 +1,42 @@
+---
+description: Rust/Axum 后端分层、ApiResponse、AppState 约定
+globs: backend/**/*.rs
+alwaysApply: false
+---
+
+# 后端（Rust / Axum）
+
+## 分层
+
+1. `main.rs` — 只注册路由
+2. `handlers.rs` — HTTP 入参 → 调 dbus/utils/db → 返回 `ApiResponse`
+3. `dbus.rs` / `utils.rs` / `db.rs` — ofono、`/proc`/`/sys`、SQLite
+4. `models.rs` — 请求/响应结构体 + `ApiResponse<T>`
+
+写法对齐现有 `handlers.rs`、`dbus.rs`。
+
+## ApiResponse
+
+```rust
+// ✅
+Json(ApiResponse::success_with_message("Success", data))
+Json(ApiResponse::error(format!("Failed to …: {}", e)))
+
+// ❌ 随意拼 JSON / { ok: true } 等非统一结构
+```
+
+Handler 通常返回 `(StatusCode::OK, Json<ApiResponse<_>>)`，失败写在 `status: "error"`。
+
+## 异步与错误
+
+- 所有 I/O 用 `async`/`await`
+- 错误信息要写清「哪一步失败」
+- 日志用 `tracing`（`info!`/`warn!`/`error!`），不用 `println!`
+
+## 状态
+
+使用 `main.rs` 已接入的 `AppState` / `State(...)`。不要另起一套全局静态存 DB/配置/D-Bus。
+
+## 自检
+
+新增路由后：在 `main.rs` 注册、在 `models.rs` 补类型，并加对应 `bruno-api`（见 `api-feature-flow.mdc`）。

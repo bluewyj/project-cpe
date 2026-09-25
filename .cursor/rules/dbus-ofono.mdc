@@ -1,0 +1,42 @@
+---
+description: ofono D-Bus/AT 串行化；飞行模式、射频、数据连接语义
+globs: backend/src/dbus.rs,backend/src/serial.rs,backend/src/handlers.rs,backend/src/iptables.rs
+alwaysApply: false
+---
+
+# ofono / D-Bus / AT
+
+## 串行化（强制）
+
+ofono 不支持并发（易报 `InProgress`）。**每一次** D-Bus/AT 调用都包在 `with_serial` 里：
+
+```rust
+use crate::serial::with_serial;
+
+pub async fn send_at_command(conn: &Connection, cmd: &str) -> zbus::Result<String> {
+    with_serial(async {
+        // Proxy::new … call …
+        Ok(result)
+    }).await
+}
+```
+
+**禁止** 同一请求路径里并行打 ofono。读系统 `/proc` 等可以并行。
+
+## 语义对照
+
+| 目标 | 用这个 | 不要用 |
+|------|--------|--------|
+| 飞行模式 | Modem `Online` false/true | `Powered` |
+| 射频制式偏好 | `org.ofono.RadioSettings` 的 `TechnologyPreference` | 把 `AT+SPLMODE` 当主路径 |
+| 数据开关 | Connection 上下文的 `Active` | 靠私自改 iptables 当成功条件 |
+
+`SetProperty` 后网络可能要重新注册，不要假定立刻变成 `registered`。
+
+## 频段 / 锁小区
+
+优先用 `dbus.rs` / `utils.rs` 里已有 AT 与解析（如 `AT+SPLBAND`）。解锁跟现有 unlock 助手一样用零掩码——不要发明新 AT 方言。
+
+## iptables
+
+切数据时可能 `iptables -F`；清空失败只打警告，**不得**挡住 D-Bus 的 `Active` 切换。

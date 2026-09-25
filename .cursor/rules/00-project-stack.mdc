@@ -1,0 +1,30 @@
+---
+description: 项目技术栈、目录与全局硬约束（中文）
+alwaysApply: true
+---
+
+# 项目技术栈（常驻）
+
+## 版本钉死（勿按其他大版本臆造 API）
+
+- 后端：Rust 2021、Axum **0.8**、zbus **5**、tokio、rusqlite、tracing、anyhow
+- 前端：React **19**、MUI **7**、Vite **7**、React Router **7**、TypeScript ~5.9
+- 控制面：ofono D-Bus + AT；对外 HTTP JSON 在 `/api/*`
+
+## 目录
+
+- `backend/src/` — 服务（`main` 路由 → `handlers` → `dbus`/`utils`/`db`）
+- `frontend/src/` — 管理界面（`api/`、`pages/`、`components/`、`hooks/`、`contexts/`）
+- `bruno-api/` — Bruno 接口集合（必须与路由同步）
+- 前端构建产物由二进制同级 `www/` 提供
+
+## 硬约束
+
+- **禁止** 未经 `with_serial` 调用 ofono/D-Bus/AT（见 `backend/src/serial.rs`）
+- **禁止** 为系统指标再拆零散 `/api/stats/...`；应扩展现有 `/api/stats` / `SystemStatsResponse`
+- **禁止** 臆造 ofono 属性语义（飞行模式用 Modem 的 `Online`，不用 `Powered`）
+- 优先对照仓库已有写法，少粘贴大段「新套路」
+
+## 分域规则（按文件/相关性加载）
+
+- 后端：`rust-backend.mdc` · ofono：`dbus-ofono.mdc` · 前端：`frontend-react.mdc` · 新 API：`api-feature-flow.mdc`

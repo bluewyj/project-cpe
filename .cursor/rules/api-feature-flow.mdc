@@ -1,0 +1,39 @@
+---
+description: 新增或修改 HTTP API 时的端到端清单（后端/前端/Bruno）
+alwaysApply: false
+---
+
+# 新增 / 修改 API 清单
+
+增改 HTTP 接口时，适用步骤尽量在**同一次改动**里做完。
+
+## 后端
+
+1. `backend/src/models.rs` 定义结构体
+2. 逻辑放 `dbus.rs` / `utils.rs` / `db.rs`（D-Bus 必须 `with_serial`）
+3. `handlers.rs` 返回 `ApiResponse<T>`
+4. `backend/src/main.rs` 注册路由
+
+## 前端（界面需要时）
+
+5. `frontend/src/api/types.ts` 补类型
+6. `UDX710API`（`api/index.ts`）补方法
+7. 接到页面/hook，错误用 `ErrorSnackbar`
+
+## Bruno（改路由必做）
+
+8. 增改 `bruno-api/*.bru`，命名对齐邻居：
+   - GET → `get_<name>.bru`
+   - POST → `set_<action>_<value>.bru` 或 `post_<action>.bru`
+9. URL 形态：`http://192.168.66.1/api/...`（参考 `bruno-api/get_stats.bru`）
+
+## 设计偏好
+
+- 系统指标优先扩展 `/api/stats`，少拆新的 `/api/stats/...`
+- 独立领域（定位、网卡、短信、OTA）可保留独立路由
+
+## 禁止交付
+
+- 有路由无 Bruno
+- Handler 绕开 `ApiResponse`
+- 前端跳过 `api/types.ts` 直接瞎 fetch

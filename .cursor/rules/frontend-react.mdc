@@ -1,0 +1,38 @@
+---
+description: React 19 + MUI 7 前端页面、API 客户端与错误展示约定
+globs: frontend/**/*.ts,frontend/**/*.tsx
+alwaysApply: false
+---
+
+# 前端（React + MUI）
+
+## 技术选型
+
+- 只用函数组件；路由用 React Router
+- MUI 7（`@mui/material`、图标、图表/表格按现有用法）
+- 每个接口载荷在 `frontend/src/api/types.ts` 有类型
+- HTTP 方法写在 `UDX710API`（`frontend/src/api/index.ts`，前缀 `/api`）
+
+## 写法
+
+```typescript
+// ✅ 先加 types + api 方法，再在页面/hook 里用
+await api.getNetworkInfo() // 返回 ApiResponse<T>
+
+// ✅ 错误用 ErrorSnackbar
+// ✅ 轮询对齐邻近页面：RefreshContext / useAdaptivePolling / useApi
+
+// ❌ 在组件里到处 fetch('/api/...')
+// ❌ 接口体用 any
+```
+
+## 界面
+
+- 复用 `components/Layout/*`，主题用 `theme.ts` / `ThemeContext`
+- Dashboard 优先沿用 `pages/Dashboard/` 的卡片与 hook 拆分
+- 页面保持单一职责；数据加载/轮询变复杂时再抽 hook
+
+## 自检
+
+- 在 `frontend/` 跑 `pnpm lint`（build 带 `--max-warnings 0`）
+- 新接口：types + `api/index.ts` 方法 + 界面调用点一起改
