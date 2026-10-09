@@ -53,8 +53,18 @@ jobs:
       - name: Install build toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc
+          sudo apt-get install -y gcc curl xz-utils binutils
           gcc --version
+
+          # 设备系统为 glibc 2.27；必须用 zig 锁定 abi，禁止默认 gnu（易链到 2.28+）
+          ZIG_VERSION=0.13.0
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-aarch64-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          sudo ln -sfn "/opt/zig-linux-aarch64-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          zig version
+
+          cargo install cargo-zigbuild --locked
+          cargo zigbuild --version
 
       - name: Install UPX
         if: steps.upx.outputs.enabled == 'true'
@@ -89,23 +99,39 @@ jobs:
           cache-targets: true
           cache-all-crates: true
 
-      - name: Build backend (aarch64-unknown-linux-gnu)
+      - name: Build backend (aarch64-unknown-linux-gnu.2.27)
         working-directory: backend
         run: |
-          echo "🦀 构建后端 (aarch64-unknown-linux-gnu)..."
+          echo "🦀 构建后端 (aarch64-unknown-linux-gnu.2.27)..."
 
-          export CC_aarch64_unknown_linux_gnu=gcc
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=gcc
           export SQLITE3_STATIC=1
           export LIBSQLITE3_SYS_USE_PKG_CONFIG=0
 
-          cargo build --locked --release --target aarch64-unknown-linux-gnu
+          cargo zigbuild --locked --release --target aarch64-unknown-linux-gnu.2.27
 
           BINARY_PATH="target/aarch64-unknown-linux-gnu/release/udx710"
+          if [ ! -f "$BINARY_PATH" ]; then
+            BINARY_PATH="target/aarch64-unknown-linux-gnu.2.27/release/udx710"
+          fi
 
           echo "后端构建完成:"
           ls -lh "$BINARY_PATH"
           file "$BINARY_PATH"
+
+          echo "检查 glibc 符号版本（不得高于 2.27）..."
+          GLIBC_VERS=$(objdump -T "$BINARY_PATH" | grep -oE 'GLIBC_[0-9.]+' | sort -uV || true)
+          echo "$GLIBC_VERS"
+          if echo "$GLIBC_VERS" | grep -E 'GLIBC_2\.(2[8-9]|[3-9][0-9])' >/dev/null; then
+            echo "错误: 二进制依赖 GLIBC >= 2.28，设备无法运行"
+            exit 1
+          fi
+
+          # 统一产物路径，供 UPX / OTA 打包步骤使用
+          mkdir -p target/aarch64-unknown-linux-gnu/release
+          if [ "$BINARY_PATH" != "target/aarch64-unknown-linux-gnu/release/udx710" ]; then
+            cp "$BINARY_PATH" target/aarch64-unknown-linux-gnu/release/udx710
+          fi
+          echo "BINARY_PATH=target/aarch64-unknown-linux-gnu/release/udx710" >> "$GITHUB_ENV"
 
       - name: Compress binary with UPX
         if: steps.upx.outputs.enabled == 'true'
