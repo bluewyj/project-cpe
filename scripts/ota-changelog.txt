@@ -1,4 +1,3 @@
-v3.5.2：
-- 修复 USB IPv6 共享自愈：ipv6_prefix_64 支持内核/ip 的 :: 压缩地址（如 2409:…:47cf::1）
-- 转发开启与前缀解析解耦，避免解析失败时 forwarding 也不开
-- 继承 3.5.1：制式自适应在后端 Watchdog；无 nr_lte_switch 补丁
+v3.5.3：
+- 修复 3.5.2 回归：开启 IPv6 forwarding 时同步 sipa_eth0.accept_ra=2，保证蜂窝仍收 RA/SLAAC 拿全球地址
+- 继承 3.5.2：ipv6_prefix_64 支持 :: 压缩；转发与前缀解析解耦
