@@ -11,7 +11,7 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 ## 本仓库相对原作者的改动
 
 本仓库基于原作者 [1orz/project-cpe](https://github.com/1orz/project-cpe) 衍生修改。  
-当前适配版本：**3.5.0**。
+当前适配版本：**3.5.2**。
 
 详细说明见：**[CHANGES-FROM-UPSTREAM.md](./CHANGES-FROM-UPSTREAM.md)**
 
@@ -111,6 +111,80 @@ cd frontend && pnpm install && pnpm run build
 ```
 
 设备默认监听 **80** 端口（`udx710 -p 80`），管理页：`http://192.168.66.1/`。
+
+### USB 共享：电脑端静态地址（无 DHCP）
+
+本项目**不向电脑下发 DHCP**。RNDIS/`usb0` 网段由设备固定为 `192.168.66.0/24`，电脑需**手动填写** IPv4；若要用 IPv6 上网，也需按蜂窝前缀**手动填写** IPv6（设备侧 Watchdog 只负责补 `usb0` 全球地址与回程路由，不发 RA/DHCPv6）。
+
+#### 拓扑（勿改错）
+
+| 角色 | 接口 | 地址角色 |
+|------|------|----------|
+| 通讯壳（CPE） | `usb0` | IPv4：`192.168.66.1/24`（后端守护，勿改） |
+| 电脑 | RNDIS /「远程 NDIS」 | IPv4：建议 `192.168.66.2/24`，网关 `192.168.66.1` |
+| 通讯壳 | `sipa_eth0` | 蜂窝 IPv6 `/64`（运营商下发，前缀会变） |
+| 通讯壳 | `usb0` | 同前缀的全球 IPv6（自愈写入，如 EUI-64 `/128`） |
+| 电脑 | 同上 RNDIS | 同前缀内另选一个主机地址 + 默认路由指向壳 |
+
+不要把设备默认路由改成经 `192.168.66.2`；电脑也不要占用 `192.168.66.1`。
+
+#### IPv4（电脑）
+
+推荐固定：
+
+- **IP**：`192.168.66.2`
+- **掩码**：`255.255.255.0`（`/24`）
+- **网关**：`192.168.66.1`
+- **DNS**：可用 `192.168.66.1`，或公共 DNS（如 `223.5.5.5` / `1.1.1.1`）
+
+同一网段也可用 `192.168.66.3`～`254`（避开 `.1`）。
+
+**Windows（设置 → 网络 → 以太网/RNDIS → 编辑 IP → 手动）** 或管理员 PowerShell：
+
+```powershell
+# 将 "远程 NDIS..." 换成实际适配器名（Get-NetAdapter 查看）
+New-NetIPAddress -InterfaceAlias "远程 NDIS 兼容虚拟小端口" -IPAddress 192.168.66.2 -PrefixLength 24 -DefaultGateway 192.168.66.1
+Set-DnsClientServerAddress -InterfaceAlias "远程 NDIS 兼容虚拟小端口" -ServerAddresses 223.5.5.5,1.1.1.1
+```
+
+**Linux：**
+
+```bash
+sudo ip addr add 192.168.66.2/24 dev <rndis接口>
+sudo ip route replace default via 192.168.66.1 dev <rndis接口>
+```
+
+填好后应能打开 `http://192.168.66.1/`，并经 USB 共享访问公网 IPv4。
+
+#### IPv6（电脑，可选）
+
+1. 在壳上确认蜂窝前缀（与 `usb0` 全球地址前 64 位一致），例如：
+   ```bash
+   adb shell "ip -6 addr show sipa_eth0; ip -6 addr show usb0"
+   ```
+   若 sipa 为 `2409:8d5c:240:47cf::1/64`，则前缀为 `2409:8d5c:240:47cf`。管理页「网络接口」里看 `usb0` 全球地址亦可。
+2. 电脑在**同一 `/64`** 内自选主机地址，**不要**与下列冲突：
+   - sipa 上的 `…::1`（或运营商已用的地址）
+   - `usb0` 上已有的全球地址（多为 EUI-64）
+3. 网关：优先用壳在 `usb0` 上的**链路本地**（`fe80::…`，需指定接口），或该口的全球 IPv6。
+4. DNS：可用运营商 DNS，或公共如 `2400:3200::1` / `2606:4700:4700::1111`。
+
+示例（前缀请换成你设备上的实际值）：
+
+- **地址**：`2409:8d5c:240:47cf::2/64`（示例；也可用 `::3`、`::100` 等）
+- **网关**：壳 `usb0` 的 `fe80::cee8:acff:fec0:0`（以实机为准）
+
+**Windows：** 同一适配器开启 IPv6 → 手动，填「IPv6 地址 / 子网前缀长度 64 / 网关 / DNS」。
+
+**Linux：**
+
+```bash
+# <前缀>、<壳fe80>、<rndis接口> 换成实机值
+sudo ip -6 addr add <前缀>::2/64 dev <rndis接口>
+sudo ip -6 route replace default via <壳fe80> dev <rndis接口>
+```
+
+说明：蜂窝重拨后 `/64` 前缀可能变化，需按新前缀改电脑静态 IPv6。设备 **3.5.2+** 会按压缩/`::` 地址正确自愈 `usb0` 侧；电脑侧仍须手工配置。
 
 ---
 
