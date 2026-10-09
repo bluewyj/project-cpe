@@ -64,7 +64,9 @@ jobs:
           zig version
 
           cargo install cargo-zigbuild --locked
-          cargo zigbuild --version
+          command -v cargo-zigbuild
+          cargo zigbuild --help >/dev/null
+          echo "cargo-zigbuild ready"
 
       - name: Install UPX
         if: steps.upx.outputs.enabled == 'true'
