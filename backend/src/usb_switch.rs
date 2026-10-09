@@ -587,20 +587,50 @@ fn write_sysctl(path: &str, value: &str) -> bool {
     write_to_file(path, value).is_ok()
 }
 
+fn ensure_sysctl_value(path: &str, want: &str) -> bool {
+    let cur = fs::read_to_string(path)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if cur == want {
+        return false;
+    }
+    write_sysctl(path, want)
+}
+
+/// 打开 IPv6 转发以支持 USB 共享。
+///
+/// Linux：`forwarding=1` 时默认不再接受 RA（`accept_ra` 视为 0），而本机蜂窝
+/// 全球地址常靠 RA/SLAAC（PDP 往往只下发 fe80）。必须先把蜂窝口
+/// `accept_ra=2`（转发开启时仍收 RA），否则会出现「修共享后壳自身丢 GUA」。
 fn ensure_ipv6_forwarding() -> bool {
     let mut acted = false;
+
+    // 先于 forwarding：避免竞态窗口内丢弃 RA
+    for path in [
+        "/proc/sys/net/ipv6/conf/sipa_eth0/accept_ra",
+        "/proc/sys/net/ipv6/conf/default/accept_ra",
+    ] {
+        if ensure_sysctl_value(path, "2") {
+            acted = true;
+            info!(%path, "USB tether: set accept_ra=2 for RA under forwarding");
+        }
+    }
+
     for path in [
         "/proc/sys/net/ipv6/conf/all/forwarding",
         "/proc/sys/net/ipv6/conf/usb0/forwarding",
         "/proc/sys/net/ipv6/conf/sipa_eth0/forwarding",
     ] {
-        let cur = fs::read_to_string(path)
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        if cur != "1" && write_sysctl(path, "1") {
+        if ensure_sysctl_value(path, "1") {
             acted = true;
         }
     }
+
+    // forwarding 写入后内核可能再次把 accept_ra 打回 0，再确认一次
+    if ensure_sysctl_value("/proc/sys/net/ipv6/conf/sipa_eth0/accept_ra", "2") {
+        acted = true;
+    }
+
     acted
 }
 
