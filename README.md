@@ -27,8 +27,9 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 - 修复网页 Commit 显示为 `unknown`
 - **3.5.0**：自定义 APN 持久化；制式自适应（曾用 shell 补丁）
 - **3.5.1**：制式自适应迁入后端 Watchdog；取消 `nr_lte_switch.sh` 补丁与 OTA 下发
+- **3.5.2**：修复 IPv6 共享自愈（支持 `ip` 压缩地址 `::`；转发与前缀解析解耦）
 
-成品 OTA：`release/udx710-ota-3.5.1.tar.gz`（**必须**用 `gnu.2.27` 构建；默认 gnu 会 GLIBC 过高导致服务起不来）
+成品 OTA：`release/udx710-ota-3.5.2.tar.gz`（**必须**用 `gnu.2.27` 构建；默认 gnu 会 GLIBC 过高导致服务起不来）
 
 ## 免责声明
 

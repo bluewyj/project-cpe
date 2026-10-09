@@ -69,7 +69,7 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.27
 | **清除** `FORWARD -i usb0 -o sipa_eth0 -j DROP` | 恢复 USB→蜂窝转发 |
 | 持久修补 `/etc/route_test.sh` | 开机不再打开 SFP；注释 DROP 规则（必要时 remount rw） |
 | **PC 对端丢失软恢复**（3.4.4） | 曾 ping 通 `192.168.66.2` 后连续失败，且 usb0 仍有 RX → 短 down/up 软复位（**不做 UDC bounce**） |
-| **IPv6 共享自愈**（3.4.5/3.4.6） | 重建 `usb0` 全球地址；补 policy rule（181/200）与前缀 `/64`；用 `ip -6 route get` 探测回程是否走 `usb0`，失败则软复位；Watchdog **不再** `ip6tables -F` |
+| **IPv6 共享自愈**（3.4.5/3.4.6，**3.5.2 修**） | 重建 `usb0` 全球地址；补 policy rule（181/200）与前缀 `/64`；用 `ip -6 route get` 探测回程；**3.5.2**：解析支持 `::` 压缩，转发与前缀解耦（修复 sipa 为 `…::1` 时自愈整段跳过） |
 | **soft-reset 防抖**（3.4.7） | PC 不可达时不为 IPv6 触发 soft-reset；提高失败阈值/冷却；`ifconfig` 软复位（避免反复 bounce 打僵 RNDIS） |
 | **断流热修**（3.4.8/3.4.9） | **移除**自动 soft-reset；Watchdog/**数据连接**不再 `iptables -F`，只清 usb0 DROP；IPv6 地址先补后清 |
 | **APN 持久化**（3.5.0） | 设置 APN 写入 `defult_apn`/`gprs`；空 APN 优先磁盘恢复 |
