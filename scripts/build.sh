@@ -356,12 +356,6 @@ if [ "$SKIP_OTA" = false ] && [ "$BUILD_BACKEND" = true ] && [ "$BUILD_FRONTEND"
         fi
         echo "  前端 MD5: $FRONTEND_MD5"
 
-        if [ -f scripts/nr_lte_switch.sh ]; then
-            echo "复制 nr_lte_switch.sh..."
-            cp scripts/nr_lte_switch.sh "$OTA_TMP/nr_lte_switch.sh"
-            chmod 755 "$OTA_TMP/nr_lte_switch.sh"
-        fi
-        
         # 生成 meta.json
         cat > "$OTA_TMP/meta.json" << EOF
 {
@@ -381,9 +375,7 @@ EOF
         OTA_FILE="release/udx710-ota-${VERSION}.tar.gz"
         echo "打包 OTA..."
         cd "$OTA_TMP"
-        TAR_ITEMS="meta.json udx710 www"
-        [ -f nr_lte_switch.sh ] && TAR_ITEMS="$TAR_ITEMS nr_lte_switch.sh"
-        tar -czf - $TAR_ITEMS > "$OLDPWD/$OTA_FILE"
+        tar -czf - meta.json udx710 www > "$OLDPWD/$OTA_FILE"
         cd "$OLDPWD"
         
         # 显示结果

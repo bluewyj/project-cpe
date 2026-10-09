@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use zbus::{proxy, zvariant::OwnedValue, Connection, Proxy};
 
@@ -1057,14 +1057,310 @@ async fn check_and_restore_data_connection(conn: &Connection) -> String {
     format!("Connected (APN: {})", apn)
 }
 
+/// 制式自适应状态（原 nr_lte_switch.sh 阶段机）
+struct RadioAdaptState {
+    phase: u8,
+    switch_count: u32,
+    cooldown: u32,
+    cooldown_counter: u32,
+    nr_streak: u32,
+    last_switch: bool,
+    last_tick: Option<Instant>,
+    last_log: String,
+}
+
+impl Default for RadioAdaptState {
+    fn default() -> Self {
+        Self {
+            phase: 1,
+            switch_count: 0,
+            cooldown: 0,
+            cooldown_counter: 0,
+            nr_streak: 0,
+            last_switch: false,
+            last_tick: None,
+            last_log: String::new(),
+        }
+    }
+}
+
+impl RadioAdaptState {
+    fn reset_phase(&mut self) {
+        self.phase = 1;
+        self.switch_count = 0;
+        self.cooldown = 0;
+        self.cooldown_counter = 0;
+        self.nr_streak = 0;
+        self.last_switch = false;
+    }
+}
+
+const NR_CAPABLE_FILE: &str = "/mnt/data/nr_lte_switch.nr_capable";
+const NO_NR_FILE: &str = "/mnt/data/nr_lte_switch.no_nr";
+const RADIO_ADAPT_INTERVAL: Duration = Duration::from_secs(60);
+
+fn mark_nr_capable() {
+    let _ = fs::remove_file(NO_NR_FILE);
+    if let Some(parent) = Path::new(NR_CAPABLE_FILE).parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(NR_CAPABLE_FILE, b"");
+}
+
+fn mark_no_nr() {
+    let _ = fs::remove_file(NR_CAPABLE_FILE);
+    if let Some(parent) = Path::new(NO_NR_FILE).parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(NO_NR_FILE, b"");
+}
+
+fn has_nr_capability(tech: &str, available_has_nr: bool) -> bool {
+    if Path::new(NR_CAPABLE_FILE).exists() {
+        return true;
+    }
+    if Path::new(NO_NR_FILE).exists() {
+        return false;
+    }
+    if tech.eq_ignore_ascii_case("NR") {
+        mark_nr_capable();
+        return true;
+    }
+    if available_has_nr {
+        mark_nr_capable();
+        return true;
+    }
+    false
+}
+
+fn available_technologies_indicate_nr(props: &HashMap<String, OwnedValue>) -> bool {
+    let Some(v) = props.get("AvailableTechnologies") else {
+        return false;
+    };
+    if let Ok(techs) = <Vec<String>>::try_from(v.clone()) {
+        return techs.iter().any(|t| {
+            let u = t.to_ascii_uppercase();
+            u.contains("NR") || u.contains("5G")
+        });
+    }
+    let s = format!("{:?}", v).to_ascii_uppercase();
+    s.contains("NR") || s.contains("5G")
+}
+
+/// 读取 NetworkRegistration.Technology + RadioSettings 偏好/可用制式
+async fn get_radio_adapt_snapshot(
+    conn: &Connection,
+) -> zbus::Result<(String, String, bool)> {
+    with_serial(async {
+        let net_proxy = NetworkRegistrationProxy::new(conn).await?;
+        let radio_proxy = RadioSettingsProxy::new(conn).await?;
+        let net_props = net_proxy.get_properties().await?;
+        let radio_props = radio_proxy.get_properties().await?;
+
+        let tech = net_props
+            .get("Technology")
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .unwrap_or_else(|| "null".to_string());
+        let pref = radio_props
+            .get("TechnologyPreference")
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .unwrap_or_else(|| "null".to_string());
+        let available_has_nr = available_technologies_indicate_nr(&radio_props);
+        Ok((tech, pref, available_has_nr))
+    })
+    .await
+}
+
+/// 促切：NR only → auto；固定 5G 时再写回 NR only
+async fn do_promote_switch(conn: &Connection, restore_nr_only: bool) -> zbus::Result<()> {
+    set_radio_mode(conn, RadioMode::NrOnly).await?;
+    set_radio_mode(conn, RadioMode::Auto).await?;
+    if restore_nr_only {
+        set_radio_mode(conn, RadioMode::NrOnly).await?;
+    }
+    Ok(())
+}
+
+async fn handle_lte_promote(
+    conn: &Connection,
+    state: &mut RadioAdaptState,
+    restore_nr_only: bool,
+    allow_mark_no_nr: bool,
+) -> String {
+    state.nr_streak = 0;
+
+    if state.phase == 1 {
+        if state.switch_count < 3 {
+            match do_promote_switch(conn, restore_nr_only).await {
+                Ok(()) => {
+                    state.switch_count += 1;
+                    format!(
+                        "阶段一：检测到 LTE，执行强制 NR 切换（第 {} 次）",
+                        state.switch_count
+                    )
+                }
+                Err(e) => format!("阶段一：强制 NR 切换失败: {}", e),
+            }
+        } else {
+            state.phase = 2;
+            state.cooldown = 10;
+            state.cooldown_counter = state.cooldown;
+            state.last_switch = false;
+            if allow_mark_no_nr {
+                mark_no_nr();
+                format!(
+                    "阶段一：已切换 3 次仍为 LTE，标记无 NR 并进入冷却期 {} 分钟",
+                    state.cooldown
+                )
+            } else {
+                format!(
+                    "阶段一：已切换 3 次仍为 LTE，进入冷却期 {} 分钟（固定5G，不标记无 NR）",
+                    state.cooldown
+                )
+            }
+        }
+    } else if state.cooldown_counter > 0 {
+        state.cooldown_counter -= 1;
+        if state.cooldown_counter == 0 {
+            "阶段二：检测到 LTE，冷却期结束，允许一次切换".to_string()
+        } else {
+            format!(
+                "阶段二：检测到 LTE，处于冷却期（剩余 {} 次检测）",
+                state.cooldown_counter
+            )
+        }
+    } else if !state.last_switch {
+        if allow_mark_no_nr && Path::new(NO_NR_FILE).exists() {
+            state.last_switch = true;
+            "阶段二：已标记无 NR，跳过冷却期切换".to_string()
+        } else {
+            match do_promote_switch(conn, restore_nr_only).await {
+                Ok(()) => {
+                    state.last_switch = true;
+                    "阶段二：检测到 LTE，执行强制 NR 冷却期切换".to_string()
+                }
+                Err(e) => format!("阶段二：强制 NR 切换失败: {}", e),
+            }
+        }
+    } else {
+        state.cooldown = match state.cooldown {
+            10 => 30,
+            30 => 60,
+            _ => 60,
+        };
+        state.cooldown_counter = state.cooldown;
+        state.last_switch = false;
+        if allow_mark_no_nr {
+            mark_no_nr();
+            format!(
+                "阶段二：检测到 LTE，切换后仍为 LTE，标记无 NR，进入冷却期 {} 分钟",
+                state.cooldown
+            )
+        } else {
+            format!(
+                "阶段二：检测到 LTE，切换后仍为 LTE，进入冷却期 {} 分钟（固定5G继续重试）",
+                state.cooldown
+            )
+        }
+    }
+}
+
+/// 制式自适应：固定 LTE 不改写；固定 NR / 自动+有 NR 能力时对卡在 LTE 促切
+async fn radio_mode_adapt_tick(conn: &Connection, state: &mut RadioAdaptState) {
+    if let Some(last) = state.last_tick {
+        if last.elapsed() < RADIO_ADAPT_INTERVAL {
+            return;
+        }
+    }
+    state.last_tick = Some(Instant::now());
+
+    let (tech, pref, available_has_nr) = match get_radio_adapt_snapshot(conn).await {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = %e, "Watchdog: radio adapt snapshot failed");
+            return;
+        }
+    };
+
+    if tech == "null" || tech.is_empty() {
+        let msg = format!(
+            "当前制式: {}, 偏好: {} —— 未获取到网络信息，跳过",
+            tech, pref
+        );
+        if msg != state.last_log {
+            info!(status = %msg, "Watchdog: radio adapt");
+            state.last_log = msg;
+        }
+        return;
+    }
+
+    if tech.eq_ignore_ascii_case("NR") {
+        mark_nr_capable();
+    }
+
+    let mode = RadioMode::from_ofono_value(&pref);
+    let msg = if mode == Some(RadioMode::LteOnly) {
+        state.reset_phase();
+        format!("当前制式: {}, 偏好: {} —— 固定 LTE，不改写", tech, pref)
+    } else if mode == Some(RadioMode::NrOnly) {
+        let detail = if tech.eq_ignore_ascii_case("NR") {
+            state.nr_streak += 1;
+            if state.nr_streak >= 2 {
+                state.reset_phase();
+                "固定5G：检测到 NR（连续两次），恢复到阶段一逻辑".to_string()
+            } else {
+                "固定5G：已在 NR，保持不切换".to_string()
+            }
+        } else if tech.eq_ignore_ascii_case("LTE") {
+            handle_lte_promote(conn, state, true, false).await
+        } else {
+            format!("固定5G：检测到未知状态: {}", tech)
+        };
+        format!(
+            "当前制式: {}, 偏好: {} —— {}",
+            tech, pref, detail
+        )
+    } else if mode != Some(RadioMode::Auto) && !pref.is_empty() && pref != "null" {
+        // 非标准 auto/lte/nr：保守不改
+        format!(
+            "当前制式: {}, 偏好: {} —— 非自动偏好，不改写",
+            tech, pref
+        )
+    } else if !has_nr_capability(&tech, available_has_nr) {
+        format!(
+            "当前制式: {}, 偏好: {} —— 未确认 NR 能力（4G 卡或不促切），跳过",
+            tech, pref
+        )
+    } else {
+        let detail = if tech.eq_ignore_ascii_case("NR") {
+            state.nr_streak += 1;
+            if state.nr_streak >= 2 {
+                state.reset_phase();
+                "检测到 NR（连续两次），恢复到阶段一逻辑".to_string()
+            } else {
+                "检测到 NR，保持不切换".to_string()
+            }
+        } else if tech.eq_ignore_ascii_case("LTE") {
+            handle_lte_promote(conn, state, false, true).await
+        } else {
+            format!("检测到未知状态: {}", tech)
+        };
+        format!(
+            "当前制式: {}, 偏好: {} —— {}",
+            tech, pref, detail
+        )
+    };
+
+    if msg != state.last_log {
+        info!(status = %msg, "Watchdog: radio adapt");
+        state.last_log = msg;
+    }
+}
+
 /// 数据连接 Watchdog - 后台轮询监控并自动恢复
 ///
 /// 持续监控数据连接状态，在断开时自动尝试恢复。
-/// 支持自动识别运营商并配置 APN。
-///
-/// # Arguments
-/// * `conn` - D-Bus 连接
-/// * `interval_secs` - 检查间隔（秒）
+/// 支持自动识别运营商并配置 APN；内嵌制式自适应（替代 nr_lte_switch.sh）。
 pub async fn data_connection_watchdog(
     conn: Arc<Connection>,
     config_manager: Arc<ConfigManager>,
@@ -1072,7 +1368,8 @@ pub async fn data_connection_watchdog(
 ) {
     let mut last_data_log = String::new();
     let mut last_usb_tether_action = false; // 上次是否修正了 USB 共享健康状态
-    
+    let mut radio_adapt = RadioAdaptState::default();
+
     loop {
         let refresh = config_manager.get_refresh();
         let heartbeat_timeout = Duration::from_millis(refresh.heartbeat_timeout_ms());
@@ -1103,15 +1400,18 @@ pub async fn data_connection_watchdog(
             Ok(Err(e)) => warn!(error = %e, "Watchdog: USB tether health failed"),
             Err(e) => warn!(error = %e, "Watchdog: USB tether health task failed"),
         }
-        
+
         // 2. 检查并恢复数据连接
         let result = check_and_restore_data_connection(&conn).await;
-        
+
         // 只在状态变化时打印日志，避免刷屏
         if result != last_data_log {
             info!(status = %result, "Watchdog: data connection");
             last_data_log = result;
         }
+
+        // 3. 制式自适应（约 60s 一次；替代外部 nr_lte_switch.sh）
+        radio_mode_adapt_tick(&conn, &mut radio_adapt).await;
     }
 }
 

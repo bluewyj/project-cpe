@@ -51,7 +51,10 @@ mod usb_switch;
 mod utils;
 mod webhook;
 
-use config::{ensure_loader_hooks_init, get_default_config_path, get_persistent_root_dir, ConfigManager};
+use config::{
+    disable_legacy_nr_lte_switch, ensure_loader_hooks_init, get_default_config_path,
+    get_persistent_root_dir, ConfigManager,
+};
 use dbus::init_data_connection;
 use handlers::*;
 use db::Database;
@@ -188,6 +191,9 @@ async fn main() -> Result<()> {
 
     if let Err(err) = ensure_loader_hooks_init() {
         warn!(error = %err, "Failed to ensure loader bootstrap");
+    }
+    if let Err(err) = disable_legacy_nr_lte_switch() {
+        warn!(error = %err, "Failed to disable legacy nr_lte_switch");
     }
 
     // USB 共享健康：关 SFP、关 sipa_usb0、确保 usb0 IP，并持久修补 route_test.sh

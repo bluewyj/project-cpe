@@ -169,12 +169,9 @@ if [ "$SKIP_COPY" = false ]; then
         echo "        请先运行 ./scripts/build.sh --frontend-only"
     fi
 
-    if [ -f scripts/nr_lte_switch.sh ]; then
-        echo "  复制制式脚本: scripts/nr_lte_switch.sh -> $TARGET_ROOT/nr_lte_switch.sh"
-        cp scripts/nr_lte_switch.sh "$TARGET_ROOT/nr_lte_switch.sh"
-        chmod 755 "$TARGET_ROOT/nr_lte_switch.sh"
-    fi
-    
+    # 清理 userdata 中遗留的 nr_lte_switch（制式逻辑已进后端）
+    rm -f "$TARGET_ROOT/nr_lte_switch.sh"
+
     echo ""
 fi
 
@@ -186,7 +183,6 @@ TARGET_ROOT="$USERDATA_DIR/home/root"
 # 设置脚本和二进制文件的可执行权限
 chmod 755 "$TARGET_ROOT/loader.sh" 2>/dev/null || true
 chmod 755 "$TARGET_ROOT/udx710" 2>/dev/null || true
-chmod 755 "$TARGET_ROOT/nr_lte_switch.sh" 2>/dev/null || true
 chmod 755 "$TARGET_ROOT/ttyd/start.sh" 2>/dev/null || true
 chmod 755 "$TARGET_ROOT/ttyd/ttyd" 2>/dev/null || true
 chmod 755 "$TARGET_ROOT/busybox-aarch64" 2>/dev/null || true
