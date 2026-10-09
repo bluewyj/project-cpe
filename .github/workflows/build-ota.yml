@@ -1,6 +1,9 @@
 name: Build OTA Package
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       use_upx:
@@ -25,6 +28,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve UPX flag
+        id: upx
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "enabled=${{ inputs.use_upx }}" >> "$GITHUB_OUTPUT"
+          else
+            # PR / push 默认开启 UPX，保证 Actions 编译产物与手工构建一致
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Read VERSION
         id: version
         run: |
@@ -40,11 +53,23 @@ jobs:
       - name: Install build toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc
+          sudo apt-get install -y gcc curl xz-utils binutils
           gcc --version
 
+          # 设备系统为 glibc 2.27；必须用 zig 锁定 abi，禁止默认 gnu（易链到 2.28+）
+          ZIG_VERSION=0.13.0
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-aarch64-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          sudo ln -sfn "/opt/zig-linux-aarch64-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          zig version
+
+          cargo install cargo-zigbuild --locked
+          command -v cargo-zigbuild
+          cargo zigbuild --help >/dev/null
+          echo "cargo-zigbuild ready"
+
       - name: Install UPX
-        if: inputs.use_upx == true
+        if: steps.upx.outputs.enabled == 'true'
         run: |
           sudo apt-get install -y upx-ucl
           upx --version
@@ -76,26 +101,42 @@ jobs:
           cache-targets: true
           cache-all-crates: true
 
-      - name: Build backend (aarch64-unknown-linux-gnu)
+      - name: Build backend (aarch64-unknown-linux-gnu.2.27)
         working-directory: backend
         run: |
-          echo "🦀 构建后端 (aarch64-unknown-linux-gnu)..."
+          echo "🦀 构建后端 (aarch64-unknown-linux-gnu.2.27)..."
 
-          export CC_aarch64_unknown_linux_gnu=gcc
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=gcc
           export SQLITE3_STATIC=1
           export LIBSQLITE3_SYS_USE_PKG_CONFIG=0
 
-          cargo build --locked --release --target aarch64-unknown-linux-gnu
+          cargo zigbuild --locked --release --target aarch64-unknown-linux-gnu.2.27
 
           BINARY_PATH="target/aarch64-unknown-linux-gnu/release/udx710"
+          if [ ! -f "$BINARY_PATH" ]; then
+            BINARY_PATH="target/aarch64-unknown-linux-gnu.2.27/release/udx710"
+          fi
 
           echo "后端构建完成:"
           ls -lh "$BINARY_PATH"
           file "$BINARY_PATH"
 
+          echo "检查 glibc 符号版本（不得高于 2.27）..."
+          GLIBC_VERS=$(objdump -T "$BINARY_PATH" | grep -oE 'GLIBC_[0-9.]+' | sort -uV || true)
+          echo "$GLIBC_VERS"
+          if echo "$GLIBC_VERS" | grep -E 'GLIBC_2\.(2[8-9]|[3-9][0-9])' >/dev/null; then
+            echo "错误: 二进制依赖 GLIBC >= 2.28，设备无法运行"
+            exit 1
+          fi
+
+          # 统一产物路径，供 UPX / OTA 打包步骤使用
+          mkdir -p target/aarch64-unknown-linux-gnu/release
+          if [ "$BINARY_PATH" != "target/aarch64-unknown-linux-gnu/release/udx710" ]; then
+            cp "$BINARY_PATH" target/aarch64-unknown-linux-gnu/release/udx710
+          fi
+          echo "BINARY_PATH=target/aarch64-unknown-linux-gnu/release/udx710" >> "$GITHUB_ENV"
+
       - name: Compress binary with UPX
-        if: inputs.use_upx == true
+        if: steps.upx.outputs.enabled == 'true'
         run: |
           BINARY_PATH="backend/target/aarch64-unknown-linux-gnu/release/udx710"
 
@@ -181,6 +222,14 @@ jobs:
           FRONTEND_MD5=$(find "$OTA_TMP/www" -type f -exec md5sum {} \; | cut -d' ' -f1 | sort | md5sum | cut -d' ' -f1)
           echo "frontend md5: $FRONTEND_MD5"
 
+          echo "复制 nr_lte_switch.sh..."
+          if [ ! -f scripts/nr_lte_switch.sh ]; then
+            echo "错误: scripts/nr_lte_switch.sh 不存在"
+            exit 1
+          fi
+          cp scripts/nr_lte_switch.sh "$OTA_TMP/nr_lte_switch.sh"
+          chmod 755 "$OTA_TMP/nr_lte_switch.sh"
+
           cat > "$OTA_TMP/meta.json" <<EOF
           {
               "version": "$VERSION",
@@ -200,7 +249,7 @@ jobs:
           OTA_FILE="release/udx710-ota-${VERSION}.tar.gz"
           echo "打包 OTA 更新包..."
           cd "$OTA_TMP"
-          tar -czf "$GITHUB_WORKSPACE/$OTA_FILE" meta.json udx710 www
+          tar -czf "$GITHUB_WORKSPACE/$OTA_FILE" meta.json udx710 www nr_lte_switch.sh
           cd "$GITHUB_WORKSPACE"
 
           echo ""
@@ -268,7 +317,7 @@ jobs:
             echo "| 版本 | ${{ steps.version.outputs.version }} |"
             echo "| Commit | ${{ github.sha }} |"
             echo "| 架构 | aarch64-unknown-linux-gnu |"
-            echo "| UPX 压缩 | ${{ inputs.use_upx }} |"
+            echo "| UPX 压缩 | ${{ steps.upx.outputs.enabled }} |"
             echo ""
             echo "### 产物"
             echo "- \`${{ steps.package.outputs.ota_file }}\`"

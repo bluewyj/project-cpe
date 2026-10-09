@@ -12,7 +12,9 @@
 //! 
 //! 处理与 ofono D-Bus 服务的通信
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -376,8 +378,333 @@ pub async fn set_apn_properties(
             Ok::<(), zbus::Error>(())
         }).await?;
     }
+
+    // 同步写入 ofono 持久化文件，避免重启后被 defult_apn / autoLoadApnMode 还原
+    if let Err(e) = persist_apn_to_disk(conn, context_path).await {
+        warn!(error = %e, context = %context_path, "Failed to persist APN to ofono storage");
+    }
     
     Ok(())
+}
+
+/// ofono 用户默认 APN 持久化目录（设备实测路径；文件名保持厂商拼写 defult_apn）
+const OFONO_DATA_DIR: &str = "/mnt/data/ofono";
+
+#[derive(Debug, Clone, Default)]
+struct PersistedApn {
+    apn: String,
+    protocol: String,
+    username: String,
+    password: String,
+    auth_method: String,
+}
+
+async fn get_subscriber_imsi(conn: &Connection) -> Result<String, String> {
+    let sim_proxy = SimManagerProxy::new(conn)
+        .await
+        .map_err(|e| format!("SimManager proxy: {}", e))?;
+    let props = sim_proxy
+        .get_properties()
+        .await
+        .map_err(|e| format!("SimManager GetProperties: {}", e))?;
+    let imsi = props
+        .get("SubscriberIdentity")
+        .and_then(|v| String::try_from(v.clone()).ok())
+        .unwrap_or_default();
+    if imsi.is_empty() {
+        return Err("IMSI not available".to_string());
+    }
+    Ok(imsi)
+}
+
+fn ofono_imsi_dir(imsi: &str) -> PathBuf {
+    PathBuf::from(OFONO_DATA_DIR).join(imsi)
+}
+
+fn context_section_from_path(context_path: &str) -> Option<String> {
+    context_path
+        .rsplit('/')
+        .next()
+        .filter(|s| s.starts_with("context"))
+        .map(|s| s.to_string())
+}
+
+/// 更新或追加 INI section 中的键值（保留其它 section / 未知键）
+fn upsert_ini_section(content: &str, section: &str, kv: &[(&str, &str)]) -> String {
+    let header = format!("[{}]", section);
+    let mut result: Vec<String> = Vec::new();
+    let mut in_section = false;
+    let mut found = false;
+    let mut written_keys: HashSet<String> = HashSet::new();
+
+    let flush_missing = |result: &mut Vec<String>, written: &HashSet<String>| {
+        for (k, v) in kv {
+            if !written.contains(*k) {
+                result.push(format!("{}={}", k, v));
+            }
+        }
+    };
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if in_section {
+                flush_missing(&mut result, &written_keys);
+                in_section = false;
+            }
+            if trimmed == header {
+                found = true;
+                in_section = true;
+                written_keys.clear();
+                result.push(line.to_string());
+                continue;
+            }
+            result.push(line.to_string());
+            continue;
+        }
+
+        if in_section {
+            if let Some((k, _)) = trimmed.split_once('=') {
+                if let Some((_, new_v)) = kv.iter().find(|(key, _)| *key == k) {
+                    result.push(format!("{}={}", k, new_v));
+                    written_keys.insert(k.to_string());
+                    continue;
+                }
+            }
+            result.push(line.to_string());
+        } else {
+            result.push(line.to_string());
+        }
+    }
+
+    if in_section {
+        flush_missing(&mut result, &written_keys);
+    }
+
+    if !found {
+        if result.last().is_some_and(|s| !s.is_empty()) {
+            result.push(String::new());
+        }
+        result.push(header);
+        for (k, v) in kv {
+            result.push(format!("{}={}", k, v));
+        }
+        result.push(String::new());
+    }
+
+    let mut out = result.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+fn parse_default_apn_file(content: &str) -> PersistedApn {
+    let mut apn = PersistedApn {
+        protocol: "dual".to_string(),
+        auth_method: "none".to_string(),
+        ..Default::default()
+    };
+    let mut in_section = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_section = trimmed == "[userDefultApn]";
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=') {
+            match k {
+                "AccessPointName" => apn.apn = v.to_string(),
+                "Username" => apn.username = v.to_string(),
+                "Password" => apn.password = v.to_string(),
+                "AuthenticationMethod" => apn.auth_method = v.to_string(),
+                "Protocol" => apn.protocol = v.to_string(),
+                _ => {}
+            }
+        }
+    }
+    apn
+}
+
+fn write_default_apn_file(dir: &Path, apn: &PersistedApn) -> Result<(), String> {
+    fs::create_dir_all(dir).map_err(|e| format!("create {}: {}", dir.display(), e))?;
+    let path = dir.join("defult_apn");
+    let content = format!(
+        "[userDefultApn]\nAccessPointName={}\nUsername={}\nPassword={}\nAuthenticationMethod={}\nProtocol={}\n",
+        apn.apn, apn.username, apn.password, apn.auth_method, apn.protocol
+    );
+    fs::write(&path, content).map_err(|e| format!("write {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn update_gprs_context_file(dir: &Path, section: &str, apn: &PersistedApn) -> Result<(), String> {
+    fs::create_dir_all(dir).map_err(|e| format!("create {}: {}", dir.display(), e))?;
+    let path = dir.join("gprs");
+    let existing = if path.exists() {
+        fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?
+    } else {
+        "[Settings]\nPowered=true\nRoamingAllowed=false\n\n".to_string()
+    };
+
+    let updated = upsert_ini_section(
+        &existing,
+        section,
+        &[
+            ("Name", "Internet"),
+            ("AccessPointName", &apn.apn),
+            ("Username", &apn.username),
+            ("Password", &apn.password),
+            ("AuthenticationMethod", &apn.auth_method),
+            ("Type", "internet"),
+            ("Protocol", &apn.protocol),
+        ],
+    );
+    fs::write(&path, updated).map_err(|e| format!("write {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn load_persisted_apn_from_disk(imsi: &str) -> Result<PersistedApn, String> {
+    let path = ofono_imsi_dir(imsi).join("defult_apn");
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let apn = parse_default_apn_file(&content);
+    if apn.apn.is_empty() {
+        return Err(format!("{} has empty AccessPointName", path.display()));
+    }
+    Ok(apn)
+}
+
+/// 将当前 context 的 APN 写入 ofono 持久化（defult_apn + gprs）
+async fn persist_apn_to_disk(conn: &Connection, context_path: &str) -> Result<(), String> {
+    let imsi = get_subscriber_imsi(conn).await?;
+    let section = context_section_from_path(context_path)
+        .ok_or_else(|| format!("invalid context path: {}", context_path))?;
+
+    let proxy = ConnectionContextProxy::builder(conn)
+        .path(context_path)
+        .map_err(|e| format!("context path: {}", e))?
+        .build()
+        .await
+        .map_err(|e| format!("context proxy: {}", e))?;
+    let props = proxy
+        .get_properties()
+        .await
+        .map_err(|e| format!("GetProperties: {}", e))?;
+
+    let persisted = PersistedApn {
+        apn: props
+            .get("AccessPointName")
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .unwrap_or_default(),
+        protocol: props
+            .get("Protocol")
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .unwrap_or_else(|| "dual".to_string()),
+        username: props
+            .get("Username")
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .unwrap_or_default(),
+        password: props
+            .get("Password")
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .unwrap_or_default(),
+        auth_method: props
+            .get("AuthenticationMethod")
+            .and_then(|v| String::try_from(v.clone()).ok())
+            .unwrap_or_else(|| "none".to_string()),
+    };
+
+    if persisted.apn.is_empty() {
+        return Err("AccessPointName is empty, skip persist".to_string());
+    }
+
+    let dir = ofono_imsi_dir(&imsi);
+    write_default_apn_file(&dir, &persisted)?;
+    update_gprs_context_file(&dir, &section, &persisted)?;
+    info!(
+        imsi = %imsi,
+        context = %context_path,
+        apn = %persisted.apn,
+        "Persisted APN to ofono storage"
+    );
+    Ok(())
+}
+
+/// 从 defult_apn 恢复自定义 APN（优先于运营商推荐默认）
+async fn restore_apn_from_disk(conn: &Connection, context_path: &str) -> Result<String, String> {
+    let imsi = get_subscriber_imsi(conn).await?;
+    let saved = load_persisted_apn_from_disk(&imsi)?;
+    // 走 set_apn_properties：含去激活/写回，并再次持久化 defult_apn + gprs
+    set_apn_properties(
+        conn,
+        context_path,
+        Some(&saved.apn),
+        Some(&saved.protocol),
+        Some(&saved.username),
+        Some(&saved.password),
+        Some(&saved.auth_method),
+    )
+    .await
+    .map_err(|e| format!("Failed to restore APN: {}", e))?;
+
+    Ok(format!(
+        "Restored persisted APN: {} ({})",
+        saved.apn, saved.protocol
+    ))
+}
+
+#[cfg(test)]
+mod apn_persist_tests {
+    use super::{parse_default_apn_file, upsert_ini_section};
+
+    #[test]
+    fn parse_defult_apn_keeps_fields() {
+        let content = "\
+[userDefultApn]
+AccessPointName=myapn
+Username=u
+Password=p
+AuthenticationMethod=chap
+Protocol=ip
+";
+        let apn = parse_default_apn_file(content);
+        assert_eq!(apn.apn, "myapn");
+        assert_eq!(apn.username, "u");
+        assert_eq!(apn.password, "p");
+        assert_eq!(apn.auth_method, "chap");
+        assert_eq!(apn.protocol, "ip");
+    }
+
+    #[test]
+    fn upsert_updates_existing_context_section() {
+        let content = "\
+[Settings]
+Powered=true
+
+[context1]
+Name=Internet
+AccessPointName=cmnet
+Protocol=dual
+Type=internet
+";
+        let updated = upsert_ini_section(
+            content,
+            "context1",
+            &[
+                ("Name", "Internet"),
+                ("AccessPointName", "custom"),
+                ("Protocol", "ip"),
+                ("Type", "internet"),
+            ],
+        );
+        assert!(updated.contains("AccessPointName=custom"));
+        assert!(updated.contains("Protocol=ip"));
+        assert!(updated.contains("[Settings]"));
+        assert!(!updated.contains("AccessPointName=cmnet"));
+    }
 }
 
 /// 设置数据连接状态
@@ -626,6 +953,11 @@ async fn auto_configure_apn(conn: &Connection, context_path: &str) -> Result<Str
     set_apn_property(conn, context_path, "Protocol", protocol)
         .await
         .map_err(|e| format!("Failed to set protocol: {}", e))?;
+
+    // 写入 defult_apn，避免仅 runtime 生效、重启又变空再反复自动配置
+    if let Err(e) = persist_apn_to_disk(conn, context_path).await {
+        warn!(error = %e, "Failed to persist auto-configured APN");
+    }
     
     Ok(format!("Auto-configured APN: {} ({})", apn, protocol))
 }
@@ -692,11 +1024,18 @@ async fn check_and_restore_data_connection(conn: &Connection) -> String {
         .and_then(|v| bool::try_from(v.clone()).ok())
         .unwrap_or(false);
     
-    // 4. 如果 APN 为空，尝试自动配置
+    // 4. APN 为空：优先从 defult_apn 恢复自定义，再回退运营商推荐
     if apn.is_empty() {
-        match auto_configure_apn(conn, &context_path).await {
+        let configure_result = match restore_apn_from_disk(conn, &context_path).await {
+            Ok(msg) => Ok(msg),
+            Err(restore_err) => {
+                info!(error = %restore_err, "No persisted APN, trying carrier default");
+                auto_configure_apn(conn, &context_path).await
+            }
+        };
+
+        match configure_result {
             Ok(msg) => {
-                // APN 配置成功后，继续尝试激活
                 match set_data_connection(conn, true).await {
                     Ok(_) => return format!("{}, connection activated", msg),
                     Err(e) => return format!("{}, but activation failed: {}", msg, e),

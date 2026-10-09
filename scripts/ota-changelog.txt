@@ -1,5 +1,7 @@
-v3.4.9 稳定热修（修复今日断流）：
-- 彻底移除自动 usb0 soft-reset / peer 探测 bounce
-- Watchdog 不再周期性 iptables -F，只清 usb0→sipa FORWARD DROP
-- IPv6 地址自愈改为先补后清，避免删地址导致抖动
-- 数据连接切换同样不再整表 flush
+v3.5.0：
+- APN 设置持久化到 ofono defult_apn/gprs，重启后保留自定义 APN
+- Watchdog：APN 为空时优先从磁盘恢复，再回退运营商默认
+- nr_lte_switch：固定 LTE 不改写；固定 NR 保留强制促切；4G 卡不促切 5G
+- OTA 包一并下发 nr_lte_switch.sh，并挂到 loader.sh 开机启动
+- 构建强制 aarch64-unknown-linux-gnu.2.27（兼容设备 glibc 2.27）
+- Actions：PR/push(main) 触发 OTA 编译（zigbuild + GLIBC 检查）

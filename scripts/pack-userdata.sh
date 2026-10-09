@@ -168,6 +168,12 @@ if [ "$SKIP_COPY" = false ]; then
         echo "  警告: 前端构建产物不存在 ($FRONTEND_DIR)"
         echo "        请先运行 ./scripts/build.sh --frontend-only"
     fi
+
+    if [ -f scripts/nr_lte_switch.sh ]; then
+        echo "  复制制式脚本: scripts/nr_lte_switch.sh -> $TARGET_ROOT/nr_lte_switch.sh"
+        cp scripts/nr_lte_switch.sh "$TARGET_ROOT/nr_lte_switch.sh"
+        chmod 755 "$TARGET_ROOT/nr_lte_switch.sh"
+    fi
     
     echo ""
 fi
@@ -180,6 +186,7 @@ TARGET_ROOT="$USERDATA_DIR/home/root"
 # 设置脚本和二进制文件的可执行权限
 chmod 755 "$TARGET_ROOT/loader.sh" 2>/dev/null || true
 chmod 755 "$TARGET_ROOT/udx710" 2>/dev/null || true
+chmod 755 "$TARGET_ROOT/nr_lte_switch.sh" 2>/dev/null || true
 chmod 755 "$TARGET_ROOT/ttyd/start.sh" 2>/dev/null || true
 chmod 755 "$TARGET_ROOT/ttyd/ttyd" 2>/dev/null || true
 chmod 755 "$TARGET_ROOT/busybox-aarch64" 2>/dev/null || true

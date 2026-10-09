@@ -2,7 +2,7 @@
 
 当前推荐 OTA 包：
 
-- `udx710-ota-3.4.9.tar.gz`
+- `udx710-ota-3.5.0.tar.gz`
 
 相对原作者改动说明见仓库根目录 [`CHANGES-FROM-UPSTREAM.md`](../CHANGES-FROM-UPSTREAM.md)。
 
