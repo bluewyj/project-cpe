@@ -11,7 +11,7 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 ## 本仓库相对原作者的改动
 
 本仓库基于原作者 [1orz/project-cpe](https://github.com/1orz/project-cpe) 衍生修改。  
-当前适配版本：**3.5.0**。
+当前适配版本：**3.5.2**。
 
 详细说明见：**[CHANGES-FROM-UPSTREAM.md](./CHANGES-FROM-UPSTREAM.md)**
 
@@ -27,8 +27,9 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 - 修复网页 Commit 显示为 `unknown`
 - **3.5.0**：自定义 APN 持久化；制式自适应（曾用 shell 补丁）
 - **3.5.1**：制式自适应迁入后端 Watchdog；取消 `nr_lte_switch.sh` 补丁与 OTA 下发
+- **3.5.2**：修复 IPv6 共享自愈（支持 `ip` 压缩地址 `::`；转发与前缀解析解耦）
 
-成品 OTA：`release/udx710-ota-3.5.1.tar.gz`（**必须**用 `gnu.2.27` 构建；默认 gnu 会 GLIBC 过高导致服务起不来）
+成品 OTA：`release/udx710-ota-3.5.2.tar.gz`（**必须**用 `gnu.2.27` 构建；默认 gnu 会 GLIBC 过高导致服务起不来）
 
 ## 免责声明
 
@@ -110,6 +111,111 @@ cd frontend && pnpm install && pnpm run build
 ```
 
 设备默认监听 **80** 端口（`udx710 -p 80`），管理页：`http://192.168.66.1/`。
+
+### USB 共享：电脑端静态地址（无 DHCP）
+
+本项目**不向电脑下发 DHCP**。RNDIS/`usb0` 网段由设备固定为 `192.168.66.0/24`，电脑需**手动填写** IPv4；若要用 IPv6 上网，也需按蜂窝前缀**手动填写** IPv6（设备侧 Watchdog 只负责补 `usb0` 全球地址与回程路由，不发 RA/DHCPv6）。
+
+#### 拓扑（勿改错）
+
+| 角色 | 接口 | 地址角色 |
+|------|------|----------|
+| 通讯壳（CPE） | `usb0` | IPv4：`192.168.66.1/24`（后端守护，勿改） |
+| 电脑 | RNDIS /「远程 NDIS」 | IPv4：建议 `192.168.66.2/24`，网关 `192.168.66.1` |
+| 通讯壳 | `sipa_eth0` | 蜂窝 IPv6 `/64`（运营商下发，前缀会变） |
+| 通讯壳 | `usb0` | 同前缀的全球 IPv6（自愈写入，如 EUI-64 `/128`） |
+| 电脑 | 同上 RNDIS | 同前缀内另选一个主机地址 + 默认路由指向壳 |
+
+不要把设备默认路由改成经 `192.168.66.2`；电脑也不要占用 `192.168.66.1`。
+
+#### IPv4（电脑）
+
+推荐固定：
+
+- **IP**：`192.168.66.2`
+- **掩码**：`255.255.255.0`（`/24`）
+- **网关**：`192.168.66.1`
+- **DNS**：可用 `192.168.66.1`，或公共 DNS（如 `223.5.5.5` / `1.1.1.1`）
+
+同一网段也可用 `192.168.66.3`～`254`（避开 `.1`）。
+
+**Windows（设置 → 网络 → 以太网/RNDIS → 编辑 IP → 手动）** 或管理员 PowerShell：
+
+```powershell
+# 将 "远程 NDIS..." 换成实际适配器名（Get-NetAdapter 查看）
+New-NetIPAddress -InterfaceAlias "远程 NDIS 兼容虚拟小端口" -IPAddress 192.168.66.2 -PrefixLength 24 -DefaultGateway 192.168.66.1
+Set-DnsClientServerAddress -InterfaceAlias "远程 NDIS 兼容虚拟小端口" -ServerAddresses 223.5.5.5,1.1.1.1
+```
+
+**Linux：**
+
+```bash
+sudo ip addr add 192.168.66.2/24 dev <rndis接口>
+sudo ip route replace default via 192.168.66.1 dev <rndis接口>
+```
+
+填好后应能打开 `http://192.168.66.1/`，并经 USB 共享访问公网 IPv4。
+
+#### IPv6（电脑，可选）
+
+先在壳上查当前前缀与网关（**每次重拨可能变化，勿照抄过期值**）：
+
+```bash
+adb shell "ip -6 addr show sipa_eth0; ip -6 addr show usb0"
+```
+
+下面用一次实机输出作为**填写样板**（你的前缀不同时，只改前 4 段）：
+
+| 壳上接口 | 实机示例 | 含义 |
+|----------|----------|------|
+| `sipa_eth0` | `2409:8d5c:240:47cf::1/64` | 蜂窝前缀 = `2409:8d5c:240:47cf` |
+| `usb0` 全球 | `2409:8d5c:240:47cf:cee8:acff:fec0:0/128` | 壳已占用，电脑不要用这个 |
+| `usb0` 链路本地 | `fe80::cee8:acff:fec0:0` | 电脑 IPv6 **默认网关**用这个 |
+
+电脑在同前缀内另选主机号，例如 `::2`（勿用 `::1`、勿用壳的 EUI-64）。
+
+##### Windows 设置界面填写案例
+
+路径：**设置 → 网络和 Internet → 以太网**（或「远程 NDIS…」）→ **编辑** → **IP 分配 / IPv6 分配** 选 **手动** → 打开 **IPv6**。
+
+按上表样板，各框填：
+
+| 界面字段 | 填什么（对照上表样板） |
+|----------|------------------------|
+| **IPv6 地址** | `2409:8d5c:240:47cf::2` |
+| **子网前缀长度** | `64` |
+| **网关** | `fe80::cee8:acff:fec0:0` |
+| **首选 DNS** | `2400:3200::1`（阿里）或 `2606:4700:4700::1111`（Cloudflare） |
+| **备用 DNS** | 可空，或再填另一个 |
+
+说明：
+
+- 「IPv6 地址」只填地址本身，**不要**写成 `…::2/64`；前缀长度单独填 `64`。
+- 网关填壳 `usb0` 的 **fe80::…**（管理页「网络接口 → usb0 → 链路本地」也能看到）。部分 Windows 版本网关框只接受全球地址时，可改填壳的全球地址，例如 `2409:8d5c:240:47cf:cee8:acff:fec0:0`。
+- 改完后可用：`ping -6 2400:3200::1`、浏览器打开 `http://[2409:8d5c:240:47cf:cee8:acff:fec0:0]/`（壳管理页，方括号必带）。
+
+##### Windows PowerShell 等价示例（管理员）
+
+```powershell
+# 先 Get-NetAdapter，把 Alias 换成你的 RNDIS 名
+$if = "远程 NDIS 兼容虚拟小端口"
+
+# IPv6：地址 + 网关（对照上表）
+New-NetIPAddress -InterfaceAlias $if -IPAddress "2409:8d5c:240:47cf::2" -PrefixLength 64 -DefaultGateway "fe80::cee8:acff:fec0:0" -AddressFamily IPv6
+Set-DnsClientServerAddress -InterfaceAlias $if -ServerAddresses "2400:3200::1","2606:4700:4700::1111"
+```
+
+若已存在旧静态 IPv6，先 `Get-NetIPAddress -InterfaceAlias $if -AddressFamily IPv6` 再 `Remove-NetIPAddress` 后再加。
+
+##### Linux 等价示例
+
+```bash
+# 接口名用 ip link 查看（常见 usb0 / enx...）
+sudo ip -6 addr add 2409:8d5c:240:47cf::2/64 dev <rndis接口>
+sudo ip -6 route replace default via fe80::cee8:acff:fec0:0 dev <rndis接口>
+```
+
+设备 **3.5.2+** 负责自愈壳侧 `usb0` 全球地址与回程；电脑侧始终要按**当时**前缀手工填，重拨后若 ping6 不通，重新查表再改电脑配置。
 
 ---
 

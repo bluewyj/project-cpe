@@ -1,5 +1,4 @@
-v3.5.1：
-- 制式自适应迁入后端 Watchdog（固定 LTE 不改写；固定 NR 保留强制促切；4G 卡不促切 5G）
-- 取消 nr_lte_switch.sh 补丁：OTA 不再下发；启动/应用时杀进程并从 loader 移除、删除脚本
-- APN 持久化（3.5.0）：设置写入 ofono defult_apn/gprs，重启后保留
-- 构建强制 aarch64-unknown-linux-gnu.2.27（兼容设备 glibc 2.27）
+v3.5.2：
+- 修复 USB IPv6 共享自愈：ipv6_prefix_64 支持内核/ip 的 :: 压缩地址（如 2409:…:47cf::1）
+- 转发开启与前缀解析解耦，避免解析失败时 forwarding 也不开
+- 继承 3.5.1：制式自适应在后端 Watchdog；无 nr_lte_switch 补丁

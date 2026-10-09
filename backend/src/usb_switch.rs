@@ -41,7 +41,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use lazy_static::lazy_static;
-use tracing::info;
+use tracing::{info, warn};
 
 /// USB 模式配置
 #[derive(Debug, Clone)]
@@ -485,16 +485,72 @@ fn iface_global_ipv6(iface: &str) -> Vec<(String, u8)> {
     out
 }
 
-/// 未压缩的 8 段 IPv6 地址取前 64 位前缀（如 2409:8962:59b5:e07）
+/// 将 IPv6 地址展开为 8 个 hextet（支持 `::` 压缩与 zone id）
+fn expand_ipv6_hextets(addr: &str) -> Option<Vec<String>> {
+    let addr = addr.split('%').next()?.trim();
+    if addr.is_empty() {
+        return None;
+    }
+
+    let has_compress = addr.contains("::");
+    if has_compress && addr.matches("::").count() != 1 {
+        return None;
+    }
+
+    let (left, right) = if has_compress {
+        let mut parts = addr.splitn(2, "::");
+        (parts.next().unwrap_or(""), parts.next().unwrap_or(""))
+    } else {
+        (addr, "")
+    };
+
+    let parse_side = |side: &str| -> Option<Vec<String>> {
+        if side.is_empty() {
+            return Some(Vec::new());
+        }
+        side.split(':')
+            .map(|h| {
+                if h.is_empty() || h.len() > 4 || u16::from_str_radix(h, 16).is_err() {
+                    None
+                } else {
+                    let t = h.trim_start_matches('0');
+                    Some(if t.is_empty() {
+                        "0".to_string()
+                    } else {
+                        t.to_string()
+                    })
+                }
+            })
+            .collect()
+    };
+
+    let left_parts = parse_side(left)?;
+    let right_parts = parse_side(right)?;
+    let used = left_parts.len() + right_parts.len();
+    if used > 8 {
+        return None;
+    }
+    if !has_compress && used != 8 {
+        return None;
+    }
+
+    let missing = 8 - used;
+    let mut out = Vec::with_capacity(8);
+    out.extend(left_parts);
+    out.extend(std::iter::repeat_with(|| "0".to_string()).take(missing));
+    out.extend(right_parts);
+    (out.len() == 8).then_some(out)
+}
+
+/// 取 IPv6 地址的 /64 前缀（4 个 hextet，如 `2409:8d5c:240:47cf`）
+///
+/// 支持内核/`ip` 常见的 `::` 压缩写法（如 `2409:8d5c:240:47cf::1`）。
 fn ipv6_prefix_64(addr: &str) -> Option<String> {
-    if addr.contains("::") {
-        return None;
-    }
-    let parts: Vec<&str> = addr.split(':').collect();
-    if parts.len() < 4 {
-        return None;
-    }
-    Some(parts[..4].join(":"))
+    let hextets = expand_ipv6_hextets(addr)?;
+    Some(format!(
+        "{}:{}:{}:{}",
+        hextets[0], hextets[1], hextets[2], hextets[3]
+    ))
 }
 
 /// MAC → EUI-64 接口标识（与内核给 usb0 的全球地址一致）
@@ -747,12 +803,19 @@ fn ensure_usb0_ipv6_tether() -> bool {
 }
 
 fn ensure_usb0_ipv6_tether_inner() -> bool {
+    // 转发与前缀解析解耦：即使暂时解不出前缀，也尽量打开 forwarding
+    let mut acted = ensure_ipv6_forwarding();
+
     let sipa_addrs = iface_global_ipv6("sipa_eth0");
     let Some((sipa_addr, _)) = sipa_addrs.first() else {
-        return false;
+        return acted;
     };
     let Some(prefix) = ipv6_prefix_64(sipa_addr) else {
-        return false;
+        warn!(
+            addr = %sipa_addr,
+            "USB tether: cannot parse IPv6 /64 prefix from sipa_eth0"
+        );
+        return acted;
     };
 
     let usb_addrs = iface_global_ipv6("usb0");
@@ -762,7 +825,6 @@ fn ensure_usb0_ipv6_tether_inner() -> bool {
             .unwrap_or(false)
     });
 
-    let mut acted = ensure_ipv6_forwarding();
     acted |= ensure_ipv6_policy_rules();
 
     let in_cooldown = USB_LINK_MONITOR
@@ -1486,6 +1548,45 @@ pub fn get_current_usb_mode() -> Result<UsbModeResult, String> {
                 .map(|mode| UsbModeResult { mode })
                 .ok_or_else(|| format!("Unknown USB mode (VID={}, PID={})", vid, pid))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expand_ipv6_hextets, ipv6_prefix_64};
+
+    #[test]
+    fn ipv6_prefix_from_compressed_sipa_addr() {
+        assert_eq!(
+            ipv6_prefix_64("2409:8d5c:240:47cf::1").as_deref(),
+            Some("2409:8d5c:240:47cf")
+        );
+    }
+
+    #[test]
+    fn ipv6_prefix_from_expanded_addr() {
+        assert_eq!(
+            ipv6_prefix_64("2409:8d5c:240:47cf:0:0:0:1").as_deref(),
+            Some("2409:8d5c:240:47cf")
+        );
+    }
+
+    #[test]
+    fn ipv6_prefix_from_eui64_usb_addr() {
+        assert_eq!(
+            ipv6_prefix_64("2409:8d5c:240:47cf:cee8:acff:fec0:0").as_deref(),
+            Some("2409:8d5c:240:47cf")
+        );
+    }
+
+    #[test]
+    fn expand_loopback_and_leading_compress() {
+        let hextets = expand_ipv6_hextets("::1").expect("expand ::1");
+        assert_eq!(
+            hextets,
+            vec!["0", "0", "0", "0", "0", "0", "0", "1"]
+        );
+        assert_eq!(ipv6_prefix_64("::1").as_deref(), Some("0:0:0:0"));
     }
 }
 
