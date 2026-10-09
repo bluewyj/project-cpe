@@ -254,7 +254,7 @@ AT+SPLBAND=2,0,0,0,0
 | `/api/band-lock` | GET/POST | 频段锁定 |
 | `/api/cell-lock` | GET/POST | 小区锁定 |
 | `/api/cell-lock/unlock-all` | POST | 解锁所有小区 |
-| `/api/apn` | GET/POST | APN 配置 |
+| `/api/apn` | GET/POST | APN 配置（POST 会持久化到 ofono `defult_apn`/`gprs`） |
 | `/api/usb-mode` | GET/POST | USB 模式切换 |
 | `/api/usb-advance` | POST | 高级 USB 模式设置 |
 

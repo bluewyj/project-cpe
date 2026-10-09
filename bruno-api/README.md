@@ -119,7 +119,7 @@
 
 ### APN 管理接口
 - **get_apn_list.bru** - 获取 APN 配置列表
-- **set_apn.bru** - 设置 APN 配置
+- **set_apn.bru** - 设置 APN 配置（同步持久化到 `/mnt/data/ofono/<IMSI>/defult_apn` 与 `gprs`，重启后保留）
 
 ### 通话记录接口
 - **get_call_history.bru** - 获取通话记录列表（分页）
@@ -210,7 +210,7 @@
 | GET | `/api/call/settings` | 获取通话设置 |
 | POST | `/api/call/settings` | 设置通话设置 |
 | GET | `/api/apn` | 获取 APN 配置列表 |
-| POST | `/api/apn` | 设置 APN 配置 |
+| POST | `/api/apn` | 设置 APN 配置（持久化到 ofono `defult_apn`/`gprs`） |
 | GET | `/api/call/history` | 获取通话记录列表 |
 | DELETE | `/api/call/history/:id` | 删除单条通话记录 |
 | POST | `/api/call/history/clear` | 清空所有通话记录 |

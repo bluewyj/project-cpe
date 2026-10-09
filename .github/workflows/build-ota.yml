@@ -1,6 +1,9 @@
 name: Build OTA Package
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       use_upx:
@@ -25,6 +28,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve UPX flag
+        id: upx
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "enabled=${{ inputs.use_upx }}" >> "$GITHUB_OUTPUT"
+          else
+            # PR / push 默认开启 UPX，保证 Actions 编译产物与手工构建一致
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Read VERSION
         id: version
         run: |
@@ -44,7 +57,7 @@ jobs:
           gcc --version
 
       - name: Install UPX
-        if: inputs.use_upx == true
+        if: steps.upx.outputs.enabled == 'true'
         run: |
           sudo apt-get install -y upx-ucl
           upx --version
@@ -95,7 +108,7 @@ jobs:
           file "$BINARY_PATH"
 
       - name: Compress binary with UPX
-        if: inputs.use_upx == true
+        if: steps.upx.outputs.enabled == 'true'
         run: |
           BINARY_PATH="backend/target/aarch64-unknown-linux-gnu/release/udx710"
 
@@ -268,7 +281,7 @@ jobs:
             echo "| 版本 | ${{ steps.version.outputs.version }} |"
             echo "| Commit | ${{ github.sha }} |"
             echo "| 架构 | aarch64-unknown-linux-gnu |"
-            echo "| UPX 压缩 | ${{ inputs.use_upx }} |"
+            echo "| UPX 压缩 | ${{ steps.upx.outputs.enabled }} |"
             echo ""
             echo "### 产物"
             echo "- \`${{ steps.package.outputs.ota_file }}\`"

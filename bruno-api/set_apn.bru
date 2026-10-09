@@ -4,6 +4,10 @@ meta {
   seq: 81
 }
 
+docs {
+  设置 APN 后会持久化到 /mnt/data/ofono/<IMSI>/defult_apn 与 gprs，重启后保留。
+}
+
 post {
   url: http://192.168.66.1:3000/api/apn
   body: json
