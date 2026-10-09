@@ -158,33 +158,64 @@ sudo ip route replace default via 192.168.66.1 dev <rndis接口>
 
 #### IPv6（电脑，可选）
 
-1. 在壳上确认蜂窝前缀（与 `usb0` 全球地址前 64 位一致），例如：
-   ```bash
-   adb shell "ip -6 addr show sipa_eth0; ip -6 addr show usb0"
-   ```
-   若 sipa 为 `2409:8d5c:240:47cf::1/64`，则前缀为 `2409:8d5c:240:47cf`。管理页「网络接口」里看 `usb0` 全球地址亦可。
-2. 电脑在**同一 `/64`** 内自选主机地址，**不要**与下列冲突：
-   - sipa 上的 `…::1`（或运营商已用的地址）
-   - `usb0` 上已有的全球地址（多为 EUI-64）
-3. 网关：优先用壳在 `usb0` 上的**链路本地**（`fe80::…`，需指定接口），或该口的全球 IPv6。
-4. DNS：可用运营商 DNS，或公共如 `2400:3200::1` / `2606:4700:4700::1111`。
-
-示例（前缀请换成你设备上的实际值）：
-
-- **地址**：`2409:8d5c:240:47cf::2/64`（示例；也可用 `::3`、`::100` 等）
-- **网关**：壳 `usb0` 的 `fe80::cee8:acff:fec0:0`（以实机为准）
-
-**Windows：** 同一适配器开启 IPv6 → 手动，填「IPv6 地址 / 子网前缀长度 64 / 网关 / DNS」。
-
-**Linux：**
+先在壳上查当前前缀与网关（**每次重拨可能变化，勿照抄过期值**）：
 
 ```bash
-# <前缀>、<壳fe80>、<rndis接口> 换成实机值
-sudo ip -6 addr add <前缀>::2/64 dev <rndis接口>
-sudo ip -6 route replace default via <壳fe80> dev <rndis接口>
+adb shell "ip -6 addr show sipa_eth0; ip -6 addr show usb0"
 ```
 
-说明：蜂窝重拨后 `/64` 前缀可能变化，需按新前缀改电脑静态 IPv6。设备 **3.5.2+** 会按压缩/`::` 地址正确自愈 `usb0` 侧；电脑侧仍须手工配置。
+下面用一次实机输出作为**填写样板**（你的前缀不同时，只改前 4 段）：
+
+| 壳上接口 | 实机示例 | 含义 |
+|----------|----------|------|
+| `sipa_eth0` | `2409:8d5c:240:47cf::1/64` | 蜂窝前缀 = `2409:8d5c:240:47cf` |
+| `usb0` 全球 | `2409:8d5c:240:47cf:cee8:acff:fec0:0/128` | 壳已占用，电脑不要用这个 |
+| `usb0` 链路本地 | `fe80::cee8:acff:fec0:0` | 电脑 IPv6 **默认网关**用这个 |
+
+电脑在同前缀内另选主机号，例如 `::2`（勿用 `::1`、勿用壳的 EUI-64）。
+
+##### Windows 设置界面填写案例
+
+路径：**设置 → 网络和 Internet → 以太网**（或「远程 NDIS…」）→ **编辑** → **IP 分配 / IPv6 分配** 选 **手动** → 打开 **IPv6**。
+
+按上表样板，各框填：
+
+| 界面字段 | 填什么（对照上表样板） |
+|----------|------------------------|
+| **IPv6 地址** | `2409:8d5c:240:47cf::2` |
+| **子网前缀长度** | `64` |
+| **网关** | `fe80::cee8:acff:fec0:0` |
+| **首选 DNS** | `2400:3200::1`（阿里）或 `2606:4700:4700::1111`（Cloudflare） |
+| **备用 DNS** | 可空，或再填另一个 |
+
+说明：
+
+- 「IPv6 地址」只填地址本身，**不要**写成 `…::2/64`；前缀长度单独填 `64`。
+- 网关填壳 `usb0` 的 **fe80::…**（管理页「网络接口 → usb0 → 链路本地」也能看到）。部分 Windows 版本网关框只接受全球地址时，可改填壳的全球地址，例如 `2409:8d5c:240:47cf:cee8:acff:fec0:0`。
+- 改完后可用：`ping -6 2400:3200::1`、浏览器打开 `http://[2409:8d5c:240:47cf:cee8:acff:fec0:0]/`（壳管理页，方括号必带）。
+
+##### Windows PowerShell 等价示例（管理员）
+
+```powershell
+# 先 Get-NetAdapter，把 Alias 换成你的 RNDIS 名
+$if = "远程 NDIS 兼容虚拟小端口"
+
+# IPv6：地址 + 网关（对照上表）
+New-NetIPAddress -InterfaceAlias $if -IPAddress "2409:8d5c:240:47cf::2" -PrefixLength 64 -DefaultGateway "fe80::cee8:acff:fec0:0" -AddressFamily IPv6
+Set-DnsClientServerAddress -InterfaceAlias $if -ServerAddresses "2400:3200::1","2606:4700:4700::1111"
+```
+
+若已存在旧静态 IPv6，先 `Get-NetIPAddress -InterfaceAlias $if -AddressFamily IPv6` 再 `Remove-NetIPAddress` 后再加。
+
+##### Linux 等价示例
+
+```bash
+# 接口名用 ip link 查看（常见 usb0 / enx...）
+sudo ip -6 addr add 2409:8d5c:240:47cf::2/64 dev <rndis接口>
+sudo ip -6 route replace default via fe80::cee8:acff:fec0:0 dev <rndis接口>
+```
+
+设备 **3.5.2+** 负责自愈壳侧 `usb0` 全球地址与回程；电脑侧始终要按**当时**前缀手工填，重拨后若 ping6 不通，重新查表再改电脑配置。
 
 ---
 
