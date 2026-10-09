@@ -1,7 +1,7 @@
 # 相对原作者（1orz/project-cpe）的改动说明
 
 > 基线：原项目 [1orz/project-cpe](https://github.com/1orz/project-cpe)  
-> 本分支版本：`3.4.9`  
+> 本分支版本：`3.5.0`  
 > 更新日期：2026-07-31
 
 本仓库在原作者开源项目基础上，针对 **华为/展锐 UDX710 5G 通讯壳（RNDIS USB 共享）** 场景做了稳定性与构建兼容性修复。  
@@ -72,6 +72,8 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.27
 | **IPv6 共享自愈**（3.4.5/3.4.6） | 重建 `usb0` 全球地址；补 policy rule（181/200）与前缀 `/64`；用 `ip -6 route get` 探测回程是否走 `usb0`，失败则软复位；Watchdog **不再** `ip6tables -F` |
 | **soft-reset 防抖**（3.4.7） | PC 不可达时不为 IPv6 触发 soft-reset；提高失败阈值/冷却；`ifconfig` 软复位（避免反复 bounce 打僵 RNDIS） |
 | **断流热修**（3.4.8/3.4.9） | **移除**自动 soft-reset；Watchdog/**数据连接**不再 `iptables -F`，只清 usb0 DROP；IPv6 地址先补后清 |
+| **APN 持久化**（3.5.0） | 设置 APN 写入 `defult_apn`/`gprs`；空 APN 优先磁盘恢复 |
+| **制式自适应**（3.5.0） | `nr_lte_switch.sh`：固定 LTE/NR 尊重偏好；4G 卡不促切 5G |
 
 **明确不做的事：**  
 - 不把设备默认路由强制改为 `via 192.168.66.2`（电脑）  

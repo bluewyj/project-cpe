@@ -11,7 +11,7 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 ## 本仓库相对原作者的改动
 
 本仓库基于原作者 [1orz/project-cpe](https://github.com/1orz/project-cpe) 衍生修改。  
-当前适配版本：**3.4.9**。
+当前适配版本：**3.5.0**。
 
 详细说明见：**[CHANGES-FROM-UPSTREAM.md](./CHANGES-FROM-UPSTREAM.md)**
 
@@ -26,7 +26,7 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 - 修复 OTA `meta.json` UTF-8 BOM 解析失败
 - 修复网页 Commit 显示为 `unknown`
 
-成品 OTA：`release/udx710-ota-3.4.9.tar.gz`（或本机编译二进制）
+成品 OTA：`release/udx710-ota-3.5.0.tar.gz`（或本机编译二进制）
 ## 免责声明
 
 本项目仅供技术交流和学习使用，不得用于任何非法用途。任何使用本项目造成的任何后果，均与本项目无关，由使用者自行承担。
