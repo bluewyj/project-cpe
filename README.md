@@ -25,9 +25,10 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 - 交叉编译锁定 **glibc 2.27**（避免默认 gnu 链到 2.28+ 导致 `GLIBC_2.28 not found`）
 - 修复 OTA `meta.json` UTF-8 BOM 解析失败
 - 修复网页 Commit 显示为 `unknown`
-- **3.5.0**：自定义 APN 持久化；`nr_lte_switch.sh` 制式自适应并随 OTA 下发
+- **3.5.0**：自定义 APN 持久化；制式自适应（曾用 shell 补丁）
+- **3.5.1**：制式自适应迁入后端 Watchdog；取消 `nr_lte_switch.sh` 补丁与 OTA 下发
 
-成品 OTA：`release/udx710-ota-3.5.0.tar.gz`（**必须**用 `gnu.2.27` 构建；默认 gnu 会 GLIBC 过高导致服务起不来）
+成品 OTA：`release/udx710-ota-3.5.1.tar.gz`（**必须**用 `gnu.2.27` 构建；默认 gnu 会 GLIBC 过高导致服务起不来）
 
 ## 免责声明
 
@@ -89,12 +90,12 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.27
 # Windows
 scripts\build-windows.bat
 
-# 仅打包已有产物为 OTA（含 udx710 + www + nr_lte_switch.sh）
+# 仅打包已有产物为 OTA（含 udx710 + www）
 ./scripts/pack-ota.sh
 ```
 
-OTA 包内容：`meta.json`、`udx710`、`www/`、`nr_lte_switch.sh`。  
-应用后脚本安装到 `/home/root/nr_lte_switch.sh`，并写入 `loader.sh` 开机启动。
+OTA 包内容：`meta.json`、`udx710`、`www/`。  
+制式自适应在后端 Watchdog 内执行；应用 OTA 时会停用并删除遗留的 `nr_lte_switch.sh`。
 
 ### 构建前端
 
