@@ -129,34 +129,46 @@ fi
 
 # ==================== 构建后端 ====================
 if [ "$BUILD_BACKEND" = true ]; then
-    echo "🦀 构建后端 (aarch64-unknown-linux-gnu)..."
+    echo "🦀 构建后端 (aarch64-unknown-linux-gnu.2.27)..."
+    echo ""
+    echo "设备系统为 glibc 2.27，必须锁定 ABI；禁止默认 aarch64-unknown-linux-gnu（易链到 2.28+）。"
     echo ""
 
-    # 检查交叉编译器
-    if ! command -v aarch64-unknown-linux-gnu-gcc &> /dev/null; then
-        echo "❌ 错误: 未找到 aarch64-unknown-linux-gnu-gcc"
-        echo ""
-        echo "请安装交叉编译工具链:"
-        echo "  brew tap messense/macos-cross-toolchains"
-        echo "  brew install aarch64-unknown-linux-gnu"
-        exit 1
-    fi
-    
-    cd backend
-
-    # 设置交叉编译环境变量
-    export CC_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-gcc
-    export CXX_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-g++
-    export AR_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-ar
     export SQLITE3_STATIC=1
     export LIBSQLITE3_SYS_USE_PKG_CONFIG=0
 
-    # 构建
-    cargo build --release --target aarch64-unknown-linux-gnu
+    cd backend
+
+    if command -v cargo-zigbuild &> /dev/null || cargo zigbuild --version &> /dev/null; then
+        echo "使用 cargo zigbuild..."
+        cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.27
+    else
+        echo "❌ 错误: 未找到 cargo-zigbuild"
+        echo ""
+        echo "请安装:"
+        echo "  cargo install cargo-zigbuild"
+        echo "  # 并安装 zig: https://ziglang.org/download/"
+        echo ""
+        echo "Windows 也可用: scripts/build-windows.bat"
+        exit 1
+    fi
 
     cd ..
 
     BINARY_PATH="backend/target/aarch64-unknown-linux-gnu/release/udx710"
+    if [ ! -f "$BINARY_PATH" ]; then
+        BINARY_PATH="backend/target/aarch64-unknown-linux-gnu.2.27/release/udx710"
+    fi
+    if [ ! -f "$BINARY_PATH" ]; then
+        echo "❌ 错误: 未找到构建产物"
+        exit 1
+    fi
+    # 统一到标准路径，方便后续 OTA/deploy 脚本
+    mkdir -p backend/target/aarch64-unknown-linux-gnu/release
+    if [ "$BINARY_PATH" != "backend/target/aarch64-unknown-linux-gnu/release/udx710" ]; then
+        cp "$BINARY_PATH" backend/target/aarch64-unknown-linux-gnu/release/udx710
+        BINARY_PATH="backend/target/aarch64-unknown-linux-gnu/release/udx710"
+    fi
 
     echo ""
     echo "✅ 后端构建完成！"
@@ -343,6 +355,12 @@ if [ "$SKIP_OTA" = false ] && [ "$BUILD_BACKEND" = true ] && [ "$BUILD_FRONTEND"
             FRONTEND_MD5=$(find "$OTA_TMP/www" -type f -exec md5sum {} \; | cut -d' ' -f1 | sort | md5sum | cut -d' ' -f1)
         fi
         echo "  前端 MD5: $FRONTEND_MD5"
+
+        if [ -f scripts/nr_lte_switch.sh ]; then
+            echo "复制 nr_lte_switch.sh..."
+            cp scripts/nr_lte_switch.sh "$OTA_TMP/nr_lte_switch.sh"
+            chmod 755 "$OTA_TMP/nr_lte_switch.sh"
+        fi
         
         # 生成 meta.json
         cat > "$OTA_TMP/meta.json" << EOF
@@ -363,7 +381,9 @@ EOF
         OTA_FILE="release/udx710-ota-${VERSION}.tar.gz"
         echo "打包 OTA..."
         cd "$OTA_TMP"
-        tar -czf - meta.json udx710 www > "$OLDPWD/$OTA_FILE"
+        TAR_ITEMS="meta.json udx710 www"
+        [ -f nr_lte_switch.sh ] && TAR_ITEMS="$TAR_ITEMS nr_lte_switch.sh"
+        tar -czf - $TAR_ITEMS > "$OLDPWD/$OTA_FILE"
         cd "$OLDPWD"
         
         # 显示结果

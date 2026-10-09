@@ -220,6 +220,14 @@ jobs:
           FRONTEND_MD5=$(find "$OTA_TMP/www" -type f -exec md5sum {} \; | cut -d' ' -f1 | sort | md5sum | cut -d' ' -f1)
           echo "frontend md5: $FRONTEND_MD5"
 
+          echo "复制 nr_lte_switch.sh..."
+          if [ ! -f scripts/nr_lte_switch.sh ]; then
+            echo "错误: scripts/nr_lte_switch.sh 不存在"
+            exit 1
+          fi
+          cp scripts/nr_lte_switch.sh "$OTA_TMP/nr_lte_switch.sh"
+          chmod 755 "$OTA_TMP/nr_lte_switch.sh"
+
           cat > "$OTA_TMP/meta.json" <<EOF
           {
               "version": "$VERSION",
@@ -239,7 +247,7 @@ jobs:
           OTA_FILE="release/udx710-ota-${VERSION}.tar.gz"
           echo "打包 OTA 更新包..."
           cd "$OTA_TMP"
-          tar -czf "$GITHUB_WORKSPACE/$OTA_FILE" meta.json udx710 www
+          tar -czf "$GITHUB_WORKSPACE/$OTA_FILE" meta.json udx710 www nr_lte_switch.sh
           cd "$GITHUB_WORKSPACE"
 
           echo ""

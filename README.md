@@ -25,8 +25,10 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 - 交叉编译锁定 **glibc 2.27**（避免默认 gnu 链到 2.28+ 导致 `GLIBC_2.28 not found`）
 - 修复 OTA `meta.json` UTF-8 BOM 解析失败
 - 修复网页 Commit 显示为 `unknown`
+- **3.5.0**：自定义 APN 持久化；`nr_lte_switch.sh` 制式自适应并随 OTA 下发
 
-成品 OTA：`release/udx710-ota-3.5.0.tar.gz`（或本机编译二进制）
+成品 OTA：`release/udx710-ota-3.5.0.tar.gz`（**必须**用 `gnu.2.27` 构建；默认 gnu 会 GLIBC 过高导致服务起不来）
+
 ## 免责声明
 
 本项目仅供技术交流和学习使用，不得用于任何非法用途。任何使用本项目造成的任何后果，均与本项目无关，由使用者自行承担。
@@ -70,20 +72,34 @@ powered by Cursor Claude Opus 4.5 & Sonnet 4.5 & OpenAI GPT-5.1/5.2
 
 ## 🚀 快速开始
 
-### 构建后端
+### 构建后端（锁定 glibc 2.27）
+
+设备系统是 **glibc 2.27**。必须用：
 
 ```bash
-# 交叉编译 (macOS -> Linux aarch64)
+cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.27
+```
+
+**不要**用默认 `aarch64-unknown-linux-gnu`（常链到 GLIBC 2.28+，OTA 后网页/服务全挂）。
+
+```bash
+# 一键构建（内部走 zigbuild .2.27）+ UPX + OTA 包
 ./scripts/build.sh
 
-# 带 UPX 压缩
-./scripts/build.sh --upx
+# Windows
+scripts\build-windows.bat
+
+# 仅打包已有产物为 OTA（含 udx710 + www + nr_lte_switch.sh）
+./scripts/pack-ota.sh
 ```
+
+OTA 包内容：`meta.json`、`udx710`、`www/`、`nr_lte_switch.sh`。  
+应用后脚本安装到 `/home/root/nr_lte_switch.sh`，并写入 `loader.sh` 开机启动。
 
 ### 构建前端
 
 ```bash
-cd frontend && npm run build
+cd frontend && pnpm install && pnpm run build
 ```
 
 ### 部署
@@ -92,24 +108,37 @@ cd frontend && npm run build
 ./scripts/deploy.sh
 ```
 
+设备默认监听 **80** 端口（`udx710 -p 80`），管理页：`http://192.168.66.1/`。
+
 ---
 
-## 🔧 环境配置 (macOS)
+## 🔧 环境配置
+
+### Windows（推荐）
+
+```bat
+scripts\install-zigbuild.bat
+scripts\build-windows.bat
+```
+
+### macOS / Linux
 
 ```bash
-# 1. 安装 Rust
-brew install rust rustup
+# 1. Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup default stable
 rustup target add aarch64-unknown-linux-gnu
 
-# 2. 安装交叉编译工具链
-brew tap messense/macos-cross-toolchains
-brew install aarch64-unknown-linux-gnu
+# 2. Zig + cargo-zigbuild（用于锁定 glibc 2.27）
+# 安装 zig: https://ziglang.org/download/
+cargo install cargo-zigbuild
 
-# 3. 验证
-rustup target list --installed
-which aarch64-unknown-linux-gnu-gcc
+# 3. 构建
+cd backend
+cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.27
 ```
+
+> 旧的 brew `aarch64-unknown-linux-gnu` 交叉 gcc **不足以**保证 2.27 ABI，本仓库以 zigbuild 为准。
 
 ---
 

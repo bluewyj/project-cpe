@@ -99,6 +99,16 @@ else
 fi
 echo "   MD5: $FRONTEND_MD5"
 
+# 制式自适应脚本（OTA 一并下发到 /home/root/nr_lte_switch.sh）
+NR_LTE_SRC="scripts/nr_lte_switch.sh"
+if [ -f "$NR_LTE_SRC" ]; then
+    echo "📋 复制 nr_lte_switch.sh..."
+    cp "$NR_LTE_SRC" "$OTA_TMP/nr_lte_switch.sh"
+    chmod 755 "$OTA_TMP/nr_lte_switch.sh"
+else
+    echo "⚠️  未找到 $NR_LTE_SRC，OTA 将不含制式脚本"
+fi
+
 # 读取更新说明（可选）
 CHANGELOG=""
 if [ -f "$SCRIPT_DIR/ota-changelog.txt" ]; then
@@ -143,7 +153,9 @@ mkdir -p release
 OTA_FILE="release/udx710-ota-${VERSION}.tar.gz"
 echo "📦 打包 OTA 更新包..."
 cd "$OTA_TMP"
-tar -czf - meta.json udx710 www > "$OLDPWD/$OTA_FILE"
+TAR_ITEMS="meta.json udx710 www"
+[ -f "$OTA_TMP/nr_lte_switch.sh" ] && TAR_ITEMS="$TAR_ITEMS nr_lte_switch.sh"
+tar -czf - $TAR_ITEMS > "$OLDPWD/$OTA_FILE"
 cd "$OLDPWD"
 
 # 显示结果

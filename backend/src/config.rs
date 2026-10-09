@@ -23,10 +23,12 @@ use tracing::{info, warn};
 const DEFAULT_LOADER_SCRIPT: &str = r#"#!/bin/sh
 /home/root/ttyd/start.sh &
 /home/root/udx710 -p 80 &
+/home/root/nr_lte_switch.sh &
 "#;
 const LOADER_SCRIPT_PATH: &str = "/home/root/loader.sh";
 const INIT_SCRIPT_PATH: &str = "/home/root/init.sh";
 const INIT_SCRIPT_LOADER_COMMAND: &str = "sh /home/root/init.sh &";
+const NR_LTE_SWITCH_LOADER_COMMAND: &str = "/home/root/nr_lte_switch.sh &";
 
 /// Webhook 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -514,7 +516,8 @@ pub fn ensure_loader_hooks_init() -> Result<(), String> {
         stripped_content
     };
 
-    let updated_content = append_init_command_to_loader(&base_content);
+    let with_nr = append_nr_lte_switch_command_to_loader(&base_content);
+    let updated_content = append_init_command_to_loader(&with_nr);
 
     if let Some(parent) = loader_path.parent() {
         fs::create_dir_all(parent)
@@ -528,6 +531,68 @@ pub fn ensure_loader_hooks_init() -> Result<(), String> {
     let _ = fs::remove_file("/home/root/ota.sh");
 
     Ok(())
+}
+
+/// 确保 loader.sh 启动 nr_lte_switch（不覆盖其它自定义启动项）
+pub fn ensure_nr_lte_switch_hook() -> Result<(), String> {
+    let loader_path = PathBuf::from(LOADER_SCRIPT_PATH);
+    let current = if loader_path.exists() {
+        fs::read_to_string(&loader_path)
+            .map_err(|e| format!("Failed to read loader.sh: {}", e))?
+    } else {
+        DEFAULT_LOADER_SCRIPT.to_string()
+    };
+
+    let updated = append_nr_lte_switch_command_to_loader(&current);
+    if updated != current {
+        fs::write(&loader_path, &updated)
+            .map_err(|e| format!("Failed to write loader.sh: {}", e))?;
+        set_executable_permissions(&loader_path)?;
+    }
+    Ok(())
+}
+
+fn loader_contains_nr_lte_switch(content: &str) -> bool {
+    content
+        .lines()
+        .any(|line| line.trim() == NR_LTE_SWITCH_LOADER_COMMAND)
+}
+
+fn append_nr_lte_switch_command_to_loader(content: &str) -> String {
+    let normalized = normalize_newlines(content);
+    if loader_contains_nr_lte_switch(&normalized) {
+        return if normalized.ends_with('\n') {
+            normalized
+        } else {
+            format!("{}\n", normalized)
+        };
+    }
+
+    let base = if normalized.trim().is_empty() {
+        DEFAULT_LOADER_SCRIPT.trim_end_matches('\n').to_string()
+    } else {
+        normalized.trim_end_matches('\n').to_string()
+    };
+
+    // 插在 init.sh 钩子之前，保证开机尽早跑制式脚本
+    if loader_contains_init_command(&base) {
+        let mut lines: Vec<String> = base.lines().map(|l| l.to_string()).collect();
+        if let Some(idx) = lines
+            .iter()
+            .position(|l| l.trim() == INIT_SCRIPT_LOADER_COMMAND)
+        {
+            lines.insert(idx, NR_LTE_SWITCH_LOADER_COMMAND.to_string());
+        } else {
+            lines.push(NR_LTE_SWITCH_LOADER_COMMAND.to_string());
+        }
+        let mut out = lines.join("\n");
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out
+    } else {
+        format!("{}\n{}\n", base, NR_LTE_SWITCH_LOADER_COMMAND)
+    }
 }
 
 pub fn get_init_script() -> Result<crate::models::InitScriptResponse, String> {

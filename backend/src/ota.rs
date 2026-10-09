@@ -8,6 +8,8 @@ const OTA_STAGING_DIR: &str = "/tmp/ota_staging";
 const OTA_BINARY_PATH: &str = "/home/root/udx710";
 const OTA_BINARY_NEW_PATH: &str = "/home/root/udx710.new";
 const OTA_WWW_PATH: &str = "/home/root/www";
+const OTA_NR_LTE_SWITCH_PATH: &str = "/home/root/nr_lte_switch.sh";
+const OTA_NR_LTE_SWITCH_NAME: &str = "nr_lte_switch.sh";
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -242,11 +244,20 @@ pub fn apply_ota_update(restart_now: bool) -> Result<String, String> {
 
     let staging_binary = Path::new(OTA_STAGING_DIR).join("udx710");
     let staging_www = Path::new(OTA_STAGING_DIR).join("www");
+    let staging_nr_lte = Path::new(OTA_STAGING_DIR).join(OTA_NR_LTE_SWITCH_NAME);
 
     install_running_binary(&staging_binary)?;
 
     let _ = fs::remove_dir_all(OTA_WWW_PATH);
     copy_dir_recursive(staging_www.to_str().unwrap_or(""), OTA_WWW_PATH)?;
+
+    // 可选脚本：旧包没有也不失败；有则安装并挂到 loader
+    if staging_nr_lte.exists() {
+        install_helper_script(&staging_nr_lte, OTA_NR_LTE_SWITCH_PATH)?;
+        crate::config::ensure_nr_lte_switch_hook()?;
+        restart_nr_lte_switch();
+    }
+
     fix_file_permissions("/home/root")?;
     crate::config::ensure_loader_hooks_init()?;
 
@@ -260,6 +271,24 @@ pub fn apply_ota_update(restart_now: bool) -> Result<String, String> {
     }
 
     Ok(format!("Update to version {} applied successfully", meta.version))
+}
+
+fn install_helper_script(staging: &Path, dest: &str) -> Result<(), String> {
+    fs::copy(staging, dest).map_err(|e| format!("Failed to install {}: {}", dest, e))?;
+    Command::new("chmod")
+        .args(["755", dest])
+        .output()
+        .map_err(|e| format!("Failed to chmod {}: {}", dest, e))?;
+    Ok(())
+}
+
+fn restart_nr_lte_switch() {
+    let _ = Command::new("killall")
+        .args(["nr_lte_switch.sh"])
+        .output();
+    let _ = Command::new("sh")
+        .args(["-c", "/home/root/nr_lte_switch.sh >/dev/null 2>&1 &"])
+        .spawn();
 }
 
 /// 替换正在运行的二进制：直接 copy 会 ETXTBSY，需先写到 .new 再 rename 覆盖
@@ -332,12 +361,19 @@ fn detect_zip_format(data: &[u8]) -> bool {
 fn fix_file_permissions(root: &str) -> Result<(), String> {
     let binary_path = format!("{}/udx710", root);
     let www_path = format!("{}/www", root);
+    let nr_lte_path = format!("{}/nr_lte_switch.sh", root);
 
     if Path::new(&binary_path).exists() {
         Command::new("chmod")
             .args(["755", &binary_path])
             .output()
             .map_err(|e| format!("Failed to chmod binary {}: {}", binary_path, e))?;
+    }
+
+    if Path::new(&nr_lte_path).exists() {
+        let _ = Command::new("chmod")
+            .args(["755", &nr_lte_path])
+            .output();
     }
 
     if Path::new(&www_path).exists() {

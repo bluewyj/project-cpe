@@ -73,7 +73,7 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.27
 | **soft-reset 防抖**（3.4.7） | PC 不可达时不为 IPv6 触发 soft-reset；提高失败阈值/冷却；`ifconfig` 软复位（避免反复 bounce 打僵 RNDIS） |
 | **断流热修**（3.4.8/3.4.9） | **移除**自动 soft-reset；Watchdog/**数据连接**不再 `iptables -F`，只清 usb0 DROP；IPv6 地址先补后清 |
 | **APN 持久化**（3.5.0） | 设置 APN 写入 `defult_apn`/`gprs`；空 APN 优先磁盘恢复 |
-| **制式自适应**（3.5.0） | `nr_lte_switch.sh`：固定 LTE/NR 尊重偏好；4G 卡不促切 5G |
+| **制式自适应**（3.5.0） | `nr_lte_switch.sh`：固定 LTE/NR 尊重偏好；4G 卡不促切 5G；**随 OTA 下发并挂 loader** |
 
 **明确不做的事：**  
 - 不把设备默认路由强制改为 `via 192.168.66.2`（电脑）  
